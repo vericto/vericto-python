@@ -211,3 +211,10 @@ def test_enforce_all_stops_before_anything_runs() -> None:
     stub = StubEvaluator({"DROP TABLE t": v(Decision.BLOCKED, "DROP TABLE t")})
     with pytest.raises(VerictoBlocked):
         Vericto(stub).enforce_all(["SELECT 1", "DROP TABLE t", "SELECT 2"], "postgres")
+
+
+def test_deepcopy_returns_the_same_guard(guard: Vericto) -> None:
+    import copy
+
+    holder = {"guard": guard}
+    assert copy.deepcopy(holder)["guard"] is guard

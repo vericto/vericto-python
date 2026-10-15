@@ -21,6 +21,7 @@ Requires the ``sqlalchemy`` extra: ``pip install "vericto[sqlalchemy]"``.
 
 from __future__ import annotations
 
+import weakref
 from typing import Any, Callable, Optional
 
 from sqlalchemy import event
@@ -30,6 +31,10 @@ from .dialects import normalize_dialect
 from .guard import Vericto
 
 EVENT = "before_cursor_execute"
+
+# Engines with an active instrument() listener (and how many), so integrations built on
+# top (LangChain, LlamaIndex) can tell whether the engine is already checked.
+_INSTRUMENTED: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
 
 
 def instrument(engine: Any, *, guard: Optional[Vericto] = None, dialect: Optional[str] = None) -> Callable[[], None]:
@@ -54,12 +59,23 @@ def instrument(engine: Any, *, guard: Optional[Vericto] = None, dialect: Optiona
         return final, parameters
 
     event.listen(target, EVENT, before_cursor_execute, retval=True)
+    _INSTRUMENTED[target] = _INSTRUMENTED.get(target, 0) + 1
 
     def remove() -> None:
         if event.contains(target, EVENT, before_cursor_execute):
             event.remove(target, EVENT, before_cursor_execute)
+            left = _INSTRUMENTED.get(target, 1) - 1
+            if left > 0:
+                _INSTRUMENTED[target] = left
+            else:
+                _INSTRUMENTED.pop(target, None)
 
     return remove
 
 
-__all__ = ["instrument"]
+def is_instrumented(engine: Any) -> bool:
+    """True when :func:`instrument` is active on ``engine`` (or its ``sync_engine``)."""
+    return _INSTRUMENTED.get(getattr(engine, "sync_engine", engine), 0) > 0
+
+
+__all__ = ["instrument", "is_instrumented"]
