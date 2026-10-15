@@ -9,7 +9,7 @@ import time
 import warnings
 from collections import OrderedDict
 from dataclasses import replace
-from typing import Callable, Iterable, List, Optional
+from typing import Any, Callable, Iterable, List, Optional
 
 from .dialects import normalize_dialect
 from .errors import (
@@ -91,6 +91,12 @@ class Vericto:
 
     def __repr__(self) -> str:
         return f"Vericto(evaluator={self.evaluator!r}, fail_mode={self.fail_mode!r})"
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Vericto:
+        # A guard is a shared, thread-safe service (HTTP pool, locks, cache): frameworks
+        # that deep-copy the objects holding it (Airflow operators, pydantic models)
+        # get the same guard back instead of failing on its locks.
+        return self
 
     # -- capabilities -------------------------------------------------------------
 

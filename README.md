@@ -1,8 +1,10 @@
+Official Vericto SDK for Python: check SQL before it runs (snowflake-connector-python, sqlite3, SQLAlchemy, any DB-API driver, LangChain, LlamaIndex, dbt and Airflow).
+
 # vericto (Python)
 
 > Check every SQL statement with [Vericto](https://vericto.com) **before** it runs:
 > thin wrappers for `snowflake-connector-python`, `sqlite3`, SQLAlchemy and any
-> DB-API driver.
+> DB-API driver, and integrations for LangChain, LlamaIndex, dbt and Airflow.
 
 Vericto is a deterministic SQL firewall: it parses each statement into an AST and
 evaluates it against your workspace's rules (destructive statements, missing
@@ -25,6 +27,10 @@ release (see [Evaluators](#evaluators)).
 pip install vericto                  # core + sqlite3 + generic DB-API wrapper
 pip install "vericto[snowflake]"     # + snowflake-connector-python
 pip install "vericto[sqlalchemy]"    # + SQLAlchemy
+pip install "vericto[langchain]"     # LangChain SQL agents and chains (Python 3.10+)
+pip install "vericto[llamaindex]"    # LlamaIndex text-to-SQL (Python 3.10+)
+pip install "vericto[airflow]"       # Airflow operator and cluster policy (Python 3.10+)
+pip install "vericto[dbt]"           # vericto-dbt: CI checks for dbt projects (no extra dependency)
 ```
 
 ## Configure
@@ -224,19 +230,151 @@ evaluator (the Vericto engine in-process with synced rules, for latency and
 offline use) can be added later behind the same interface without changing the
 wrappers or your code beyond the constructor.
 
-## Integrations roadmap
+## Integrations
 
-Not implemented in 0.1.0; each is meant to be a thin layer over `Vericto.enforce`
-or the SQLAlchemy hook:
+Each is a thin layer over the guard above; the core API is unchanged.
 
-- **LangChain / LlamaIndex SQL agents**: a `SQLDatabase` built on an
-  instrumented SQLAlchemy engine already works today; a dedicated tool wrapper
-  would surface `suggested_fix` back to the agent instead of an exception.
-- **dbt**: an adapter plugin or `on-run-start` hook that checks compiled models
-  (CI-time checks are already covered by `vericto check` in vericto-cli).
-- **Airflow**: a hook for `SnowflakeHook`/`DbApiHook` that wraps `get_conn()`.
+| Integration | Install | What you get | Evaluated by | Tested with |
+|---|---|---|---|---|
+| [LangChain](#langchain) | `vericto[langchain]` | `VerictoSQLDatabase` for `QuerySQLDatabaseTool`, `SQLDatabaseToolkit`, `create_sql_agent`, SQL chains; `VerictoCheckSQLTool` | Runtime API | langchain-community 0.4.2, langchain-core 1.6.10, langchain-classic 1.0.8 |
+| [LlamaIndex](#llamaindex) | `vericto[llamaindex]` | `VerictoSQLDatabase` for `NLSQLTableQueryEngine`, `SQLTableRetrieverQueryEngine`, `NLSQLRetriever` | Runtime API | llama-index-core 0.14.25 |
+| [dbt](#dbt) | `vericto[dbt]` | `vericto-dbt check`: compiled models, snapshots and hooks, table / JSON / SARIF | CI-check API | dbt manifest v12 fixtures (no dbt runtime) |
+| [Airflow](#airflow) | `vericto[airflow]` | `VerictoSQLExecuteQueryOperator`; cluster policy `guard_sql_tasks` | Runtime API | Airflow 3.3.2 (common-sql 2.1.1) and 2.11.2 (common-sql 1.32.0), official constraints |
+| LangChain.js | `@vericto/sdk` (Node) | `@vericto/sdk/langchain` | Runtime API | see vericto-node |
+
+Runtime paths (agents, Airflow tasks) use the **Runtime API** with a
+`proxy:evaluate` key, as the wrappers do, and spend the runtime query quota.
+`vericto-dbt` checks SQL that is not being executed, so it uses the **CI-check
+API** (`POST /api/v1/ci/check-key`, the endpoint of `vericto check` in
+vericto-cli) with a `ci_dryrun:execute` key, and spends the monthly CI-check
+allowance instead.
+
+### LangChain
+
+```python
+from langchain_community.agent_toolkits import SQLDatabaseToolkit, create_sql_agent
+from vericto.langchain import VerictoCheckSQLTool, VerictoSQLDatabase
+
+db = VerictoSQLDatabase.from_uri("postgresql+psycopg://app@db/app")  # every SQLDatabase argument works
+agent = create_sql_agent(llm, toolkit=SQLDatabaseToolkit(db=db, llm=llm), extra_tools=[VerictoCheckSQLTool(db=db)])
+```
+
+`VerictoSQLDatabase` is a `langchain_community.utilities.SQLDatabase` (also
+`VerictoSQLDatabase(engine, guard=..., dialect=..., on_block=...)`). Every query
+it runs, and the sample rows `get_table_info` puts in the prompt, is checked
+after SQLAlchemy compiles it; schema reflection is not sent.
+
+- **BLOCKED**, `on_block="return"` (default): nothing runs; `run` /
+  `run_no_throw` (so `QuerySQLDatabaseTool`) return a message the model can act on:
+  `Error: Vericto blocked this query (VERICTO-010, severity critical). It was NOT
+  executed.` + the reason + `Suggested fix: ...`. `on_block="raise"` raises
+  `VerictoBlocked` instead (`run(fetch="cursor")` always raises).
+- **Mask**: the masked rewrite runs, sample rows included. **FLAGGED /
+  MONITORED**: run, logged, passed to `on_verdict`.
+- **Vericto unavailable or misconfigured**: raised, never handed to the model
+  (`fail_mode="open"` runs the query unevaluated).
+- A blocked sample-rows query is left out of the table info instead of failing.
+- `VerictoCheckSQLTool` (`vericto_check_sql`) only asks: it returns ALLOWED,
+  FLAGGED, the masked query that would run, or the block with its fix. Each call is
+  one Runtime API evaluation.
+- An engine already instrumented with `vericto.sqlalchemy.instrument` is not
+  checked twice (new helper: `vericto.sqlalchemy.is_instrumented`).
+
+### LlamaIndex
+
+```python
+from llama_index.core.query_engine import NLSQLTableQueryEngine
+from vericto.llamaindex import VerictoSQLDatabase
+
+sql_database = VerictoSQLDatabase(engine, include_tables=["orders"], on_block="return")
+query_engine = NLSQLTableQueryEngine(sql_database=sql_database, tables=["orders"], llm=llm)
+```
+
+A `llama_index.core.SQLDatabase`: `run_sql` and `insert_into_table` are checked.
+With `on_block="return"` (default) a blocked `run_sql` returns the same
+explanation as the SQL result (metadata `vericto_blocked`), so the synthesized
+answer says why; `"raise"` raises `VerictoBlocked` (`NLSQLTableQueryEngine`
+turns any retrieval error into `Error: ...` text itself; `NLSQLRetriever(...,
+handle_sql_errors=False)` lets it through). Masks, flags and unavailability as
+for LangChain.
+
+### dbt
+
+```bash
+dbt compile                       # or: dbt build --empty
+VERICTO_API_KEY=vtro_... vericto-dbt check                      # table, exit 1 on BLOCKED
+vericto-dbt check --fail-on flagged --format sarif --output vericto.sarif
+python -m vericto dbt check --format json                       # same command
+```
+
+Reads `target/manifest.json` (and `target/compiled`, or `target/run` with
+`--sql-source run`) and checks, for the root project, the compiled SQL of every
+model and snapshot, their `pre-hook`/`post-hook` statements and the
+`on-run-start`/`on-run-end` hooks. Seeds have no SQL; tests and analyses are
+opt-in (`--resource-type`), packages too (`--include-packages`); `--select`
+takes globs on name, unique id or path. Hooks that still contain Jinja (dbt
+renders them only at run time) are listed as skipped. dbt is never run or
+imported: only its artifacts are read.
+
+- **Dialect** from the manifest's adapter: `snowflake`, `postgres`, `redshift`
+  (as `postgres`, said in the output), `mysql`/`mariadb`, `sqlserver` (as
+  `mssql`), `oracle`. Any other adapter stops with exit code 2 before anything is
+  sent; `--dialect` overrides.
+- **Exit codes**, as vericto-cli: `0` pass, `1` a finding at or above
+  `--fail-on` (`blocked` default, `flagged`, `any`), `2` usage (no manifest,
+  nothing compiled, unsupported adapter), `3` key/scope/monthly allowance, `4`
+  Vericto unreachable.
+- **Privacy**: if the workspace is in `sanitized` telemetry mode, literals are
+  replaced by placeholders before sending (vericto-cli's sanitizer, ported); if
+  that setting cannot be read nothing is sent unless `--allow-unsanitized`.
+- `--database-id` / `VERICTO_DATABASE_ID` applies that database's sensitive-column
+  tags. Runs carry GitHub/GitLab provenance and appear in the dashboard's CI reports.
+- SARIF points at the model file (line 1: compiled lines do not map to the Jinja
+  source; the message gives the compiled line). GitHub Actions example:
+  [examples/dbt_github_actions.yml](examples/dbt_github_actions.yml).
+
+The command is `vericto-dbt`, not `vericto dbt`: `vericto` is vericto-cli's
+binary, and a Python script of the same name would shadow it on `PATH`.
+
+### Airflow
+
+```python
+from vericto.airflow import VerictoSQLExecuteQueryOperator
+
+VerictoSQLExecuteQueryOperator(task_id="purge", conn_id="warehouse", sql="sql/purge.sql")
+```
+
+Or guard the SQL tasks you already have, in `airflow_local_settings.py` on the
+DAG processor **and** the workers ([example](examples/airflow_local_settings.py)):
+
+```python
+from vericto.airflow.policy import guard_sql_tasks
+
+
+def task_policy(task):
+    guard_sql_tasks(task)  # every common-sql operator (SQLExecuteQueryOperator, SQL*Check, subclasses)
+```
+
+- The **rendered** SQL is checked when the task runs (the policy installs the
+  check as the task's `pre_execute` hook, after any existing one; the class and
+  serialization are unchanged). Scripts are split with the hook's
+  `split_sql_string` and every statement is evaluated before the first runs.
+- **BLOCKED**: the task fails with `VerictoTaskBlocked` (a `VerictoBlocked` and an
+  `AirflowFailException`, so it is not retried) and nothing runs. **Mask**: the
+  rewrite runs. **FLAGGED / MONITORED**: run and are logged. **Unavailable**:
+  `fail_mode="closed"` fails the task (retried like any error).
+- **Dialect** from the connection type (`postgres`, `redshift` as postgres,
+  `mysql`, `mssql`, `oracle`, `snowflake`, `sqlite`), `vericto_dialect` in the
+  connection extra (for ODBC/JDBC), or `vericto_dialect=` on the operator. Others
+  fail before running (`on_unsupported="skip"` runs them unchecked, with a warning).
+- The guard is built from the worker's `VERICTO_*` environment on first use; DAG
+  parsing never calls Vericto.
+
+## Roadmap
+
 - **Embedded evaluator**, and SQLite's `set_authorizer` as a second deny layer
   (`ATTACH`, `load_extension`).
+- dbt: a run-time `on-run-start` macro; LlamaIndex.TS.
 
 ## Development
 
@@ -247,9 +385,19 @@ uv run mypy
 uv run pytest
 ```
 
-Tests use a local stand-in for the Runtime API (pytest-httpserver), the real
-`sqlite3` module, SQLAlchemy on SQLite, and a fake Snowflake connection (the real
-connector's statement splitter is used); nothing connects to Snowflake in CI.
+Tests use a local stand-in for the Runtime API and the CI-check API
+(pytest-httpserver), the real `sqlite3` module, SQLAlchemy on SQLite, and a fake
+Snowflake connection (the real connector's statement splitter is used); nothing
+connects to Snowflake in CI. The integration tests (`tests/test_langchain.py`,
+`test_llamaindex.py`, `test_airflow.py`) skip unless their framework is
+installed; CI runs each in its own job against the versions pinned in
+`ci/requirements-*.txt` (Airflow with its official constraints file), with
+scripted LLMs and no network calls:
+
+```bash
+uv venv /tmp/vericto-lc && uv pip install --python /tmp/vericto-lc -e . -r ci/requirements-langchain.txt
+/tmp/vericto-lc/bin/python -m pytest tests/test_langchain.py
+```
 `tests/live/` holds an opt-in test against a real Snowflake account (its own
 temporary schema, dropped at the end), skipped unless `VERICTO_LIVE_SNOWFLAKE=1`
 and the `SNOWFLAKE_*` variables it lists are set.
@@ -283,6 +431,13 @@ el `execute()` del driver: `snowflake-connector-python`, `sqlite3`, SQLAlchemy
 Configuración: `VERICTO_API_KEY` (clave `vtro_...` con el scope `proxy:evaluate`),
 `VERICTO_DATABASE_ID` y, opcionalmente, `VERICTO_API_URL`, `VERICTO_FAIL_MODE`,
 `VERICTO_TIMEOUT`. Los valores de los parámetros nunca se envían a Vericto.
+
+Integraciones (0.2.0): `vericto.langchain` y `vericto.llamaindex` (un
+`SQLDatabase` que valida cada consulta del agente; si se bloquea, el agente recibe
+la regla y la corrección sugerida en vez de una excepción), `vericto-dbt check`
+(valida el SQL compilado de un proyecto dbt en CI con la API de CI-check, con
+salida JSON/SARIF) y `vericto.airflow` (operador y política de clúster). Ver
+[Integrations](#integrations).
 
 SQLite: el wrapper está listo, pero el motor de Vericto todavía no evalúa el
 dialecto `sqlite`; hasta que el servidor lo anuncie, `vericto.sqlite.connect()`

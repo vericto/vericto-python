@@ -1,0 +1,154 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.10.13",
+    "generated_at": "2026-10-14T10:00:00.000000Z",
+    "invocation_id": "00000000-0000-0000-0000-000000000000",
+    "env": {},
+    "project_name": "jaffle",
+    "project_id": "0123456789abcdef0123456789abcdef",
+    "adapter_type": "snowflake"
+  },
+  "nodes": {
+    "model.jaffle.stg_customers": {
+      "resource_type": "model",
+      "name": "stg_customers",
+      "package_name": "jaffle",
+      "path": "staging/stg_customers.sql",
+      "original_file_path": "models/staging/stg_customers.sql",
+      "unique_id": "model.jaffle.stg_customers",
+      "raw_code": "select id as customer_id, first_name, email from {{ source('raw', 'customers') }}",
+      "compiled": true,
+      "compiled_path": "target/compiled/jaffle/models/staging/stg_customers.sql",
+      "config": {
+        "enabled": true,
+        "materialized": "view",
+        "pre-hook": [],
+        "post-hook": []
+      }
+    },
+    "model.jaffle.customers": {
+      "resource_type": "model",
+      "name": "customers",
+      "package_name": "jaffle",
+      "path": "customers.sql",
+      "original_file_path": "models/customers.sql",
+      "unique_id": "model.jaffle.customers",
+      "raw_code": "select customer_id, email from {{ ref('stg_customers') }}",
+      "compiled": true,
+      "compiled_code": "select customer_id, email\nfrom ANALYTICS.DBT.stg_customers",
+      "config": {
+        "enabled": true,
+        "materialized": "table",
+        "pre-hook": [
+          {
+            "sql": "delete from ANALYTICS.DBT.audit_log",
+            "transaction": true,
+            "index": null
+          }
+        ],
+        "post-hook": [
+          {
+            "sql": "grant select on {{ this }} to role reporter",
+            "transaction": true,
+            "index": null
+          },
+          {
+            "sql": "alter table ANALYTICS.DBT.customers cluster by (customer_id)",
+            "transaction": true,
+            "index": null
+          }
+        ]
+      }
+    },
+    "snapshot.jaffle.customers_snapshot": {
+      "resource_type": "snapshot",
+      "name": "customers_snapshot",
+      "package_name": "jaffle",
+      "path": "customers_snapshot.sql",
+      "original_file_path": "snapshots/customers_snapshot.sql",
+      "unique_id": "snapshot.jaffle.customers_snapshot",
+      "compiled": true,
+      "compiled_code": "select * from ANALYTICS.DBT.customers",
+      "config": {
+        "enabled": true,
+        "strategy": "check"
+      }
+    },
+    "seed.jaffle.raw_orders": {
+      "resource_type": "seed",
+      "name": "raw_orders",
+      "package_name": "jaffle",
+      "path": "raw_orders.csv",
+      "original_file_path": "seeds/raw_orders.csv",
+      "unique_id": "seed.jaffle.raw_orders",
+      "config": {
+        "enabled": true
+      }
+    },
+    "test.jaffle.not_null_customers_customer_id.5c9bf9911d": {
+      "resource_type": "test",
+      "name": "not_null_customers_customer_id",
+      "package_name": "jaffle",
+      "path": "not_null_customers_customer_id.sql",
+      "original_file_path": "models/schema.yml",
+      "unique_id": "test.jaffle.not_null_customers_customer_id.5c9bf9911d",
+      "compiled": true,
+      "compiled_code": "select customer_id from ANALYTICS.DBT.customers where customer_id is null",
+      "config": {
+        "enabled": true
+      }
+    },
+    "model.dbt_utils.date_spine": {
+      "resource_type": "model",
+      "name": "date_spine",
+      "package_name": "dbt_utils",
+      "path": "date_spine.sql",
+      "original_file_path": "models/date_spine.sql",
+      "unique_id": "model.dbt_utils.date_spine",
+      "compiled": true,
+      "compiled_code": "select 1 as d",
+      "config": {
+        "enabled": true
+      }
+    },
+    "operation.jaffle.jaffle-on-run-start-0": {
+      "resource_type": "operation",
+      "name": "jaffle-on-run-start-0",
+      "package_name": "jaffle",
+      "path": "hooks/jaffle-on-run-start-0.sql",
+      "original_file_path": "./dbt_project.yml",
+      "unique_id": "operation.jaffle.jaffle-on-run-start-0",
+      "raw_code": "create table if not exists ANALYTICS.DBT.audit_log (run_id varchar)",
+      "config": {
+        "enabled": true
+      }
+    },
+    "operation.jaffle.jaffle-on-run-end-0": {
+      "resource_type": "operation",
+      "name": "jaffle-on-run-end-0",
+      "package_name": "jaffle",
+      "path": "hooks/jaffle-on-run-end-0.sql",
+      "original_file_path": "./dbt_project.yml",
+      "unique_id": "operation.jaffle.jaffle-on-run-end-0",
+      "raw_code": "{{ log_run_results(results) }}",
+      "config": {
+        "enabled": true
+      }
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "exposures": {},
+  "metrics": {},
+  "groups": {},
+  "selectors": {},
+  "disabled": {},
+  "parent_map": {},
+  "child_map": {},
+  "group_map": {},
+  "saved_queries": {},
+  "semantic_models": {},
+  "unit_tests": {}
+}

@@ -74,3 +74,15 @@ def test_unsupported_dialect_fails_at_instrument_time(fake: FakeVericto, guard: 
 )
 def test_dialect_mapping(sqlalchemy_name: str, vericto_name: str) -> None:
     assert normalize_dialect(sqlalchemy_name) == vericto_name
+
+
+def test_is_instrumented(fake: FakeVericto, guard: Vericto, engine: Engine) -> None:
+    assert not vericto.sqlalchemy.is_instrumented(engine)
+    first = vericto.sqlalchemy.instrument(engine, guard=guard)
+    second = vericto.sqlalchemy.instrument(engine, guard=guard)
+    assert vericto.sqlalchemy.is_instrumented(engine)
+    first()
+    first()  # a second call does not count twice
+    assert vericto.sqlalchemy.is_instrumented(engine)
+    second()
+    assert not vericto.sqlalchemy.is_instrumented(engine)

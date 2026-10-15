@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "vericto"
 dynamic = ["version"]
-description = "Check every SQL statement with Vericto before it runs: thin wrappers for snowflake-connector-python, sqlite3, SQLAlchemy and any DB-API driver."
+description = "Official Vericto SDK for Python: check SQL before it runs. Wrappers for snowflake-connector-python, sqlite3, SQLAlchemy and any DB-API driver; integrations for LangChain, LlamaIndex, dbt and Airflow."
 readme = "README.md"
 license = "Elastic-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.9"
 authors = [{ name = "Vericto", email = "security@vericto.com" }]
-keywords = ["sql", "firewall", "security", "snowflake", "sqlite", "sqlalchemy", "ai-agents", "vericto"]
+keywords = ["sql", "firewall", "security", "snowflake", "sqlite", "sqlalchemy", "ai-agents", "langchain", "llamaindex", "dbt", "airflow", "vericto"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -35,6 +35,22 @@ dependencies = ["urllib3>=1.26.18,<3"]
 [project.optional-dependencies]
 snowflake = ["snowflake-connector-python>=3.0"]
 sqlalchemy = ["sqlalchemy>=1.4"]
+# Integrations (Python 3.10+, as the frameworks themselves). Tested versions: README.
+langchain = [
+  "langchain-community>=0.3,<0.5; python_version >= '3.10'",
+  "langchain-core>=0.3,<2; python_version >= '3.10'",
+  "sqlalchemy>=1.4",
+]
+llamaindex = ["llama-index-core>=0.12,<0.15; python_version >= '3.10'", "sqlalchemy>=1.4"]
+airflow = [
+  "apache-airflow>=2.9; python_version >= '3.10' and python_version < '3.15'",
+  "apache-airflow-providers-common-sql>=1.14; python_version >= '3.10' and python_version < '3.15'",
+]
+# vericto-dbt reads dbt's artifacts and needs no dbt package: the extra is empty.
+dbt = []
+
+[project.scripts]
+vericto-dbt = "vericto.dbt:console_main"
 
 [project.urls]
 Homepage = "https://vericto.com"
@@ -81,6 +97,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106", "S608"]
+# Optional-extra tests import the framework after pytest.importorskip().
+"tests/test_{langchain,llamaindex,airflow}.py" = ["E402"]
 "examples/**" = ["S101", "S105", "S608"]
 
 [tool.mypy]
@@ -91,3 +109,16 @@ files = ["src/vericto", "tests", "examples"]
 [[tool.mypy.overrides]]
 module = ["snowflake.*", "pytest_httpserver.*", "werkzeug.*"]
 ignore_missing_imports = true
+
+# The integration frameworks are optional extras, not in the lint environment:
+# without them mypy sees their classes as Any. Their own CI jobs type-check these
+# modules against the real packages (see .github/workflows/ci.yml).
+[[tool.mypy.overrides]]
+module = ["langchain_community.*", "langchain_core.*", "langchain_classic.*", "langchain_openai.*", "llama_index.*", "airflow.*", "pydantic.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["vericto.langchain", "vericto.llamaindex", "vericto.airflow", "vericto.airflow.*", "tests.test_langchain", "tests.test_llamaindex", "tests.test_airflow"]
+disallow_subclassing_any = false
+disallow_any_unimported = false
+warn_return_any = false
