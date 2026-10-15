@@ -37,10 +37,11 @@ class VerictoConfigError(VerictoError):
 
 
 class VerictoUnsupportedDialect(VerictoConfigError):
-    """The Vericto server does not evaluate this dialect (yet).
+    """The Vericto server does not evaluate this dialect.
 
-    Raised before any SQL runs. SQLite, for example, is accepted by the wrappers but
-    only evaluated once the server lists ``sqlite`` among its dialects.
+    Raised before any SQL runs, when the dialect is missing from the server's
+    ``GET /api/v1/meta/config`` (for example ``sqlite`` against a server older than
+    vericto-engine 4.1.0, or a dialect Vericto does not support at all).
     """
 
     def __init__(self, dialect: str, supported: Sequence[str], api_url: str) -> None:

@@ -1,7 +1,7 @@
 """Guard the standard library sqlite3 module with Vericto.
 
-SQLite is evaluated once your Vericto server lists the ``sqlite`` dialect; until
-then ``connect`` raises VerictoUnsupportedDialect and no SQL runs.
+The Vericto server evaluates the ``sqlite`` dialect. Against a server that does not
+list it, ``connect`` raises VerictoUnsupportedDialect and no SQL runs.
 """
 
 from __future__ import annotations

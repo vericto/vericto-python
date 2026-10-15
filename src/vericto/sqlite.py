@@ -16,9 +16,10 @@ script runs.
 
 .. note:: SQLite has no server, so there is no proxy: this wrapper is the
    enforcement point, and SQL run through another connection to the same file is
-   not checked. The ``sqlite`` dialect is evaluated once the Vericto server lists
-   it (``GET /api/v1/meta/config``); until then :func:`connect` raises
-   :class:`~vericto.VerictoUnsupportedDialect` and no SQL runs.
+   not checked. The Vericto server evaluates the ``sqlite`` dialect (vericto-engine
+   4.1.0+); :func:`connect` still asks it (``GET /api/v1/meta/config``) and raises
+   :class:`~vericto.VerictoUnsupportedDialect`, with no SQL run, against a server
+   that does not list ``sqlite`` (for example an older self-hosted one).
 """
 
 from __future__ import annotations
@@ -120,7 +121,7 @@ def connect(database: Any, *, guard: Optional[Vericto] = None, **kwargs: Any) ->
     """``sqlite3.connect(database, **kwargs)``, guarded.
 
     Raises :class:`~vericto.VerictoUnsupportedDialect` before opening the file when
-    the server reports that it does not evaluate SQLite yet.
+    the server does not list the ``sqlite`` dialect.
     """
     if "factory" in kwargs:
         raise TypeError("vericto.sqlite.connect() sets the connection factory itself.")

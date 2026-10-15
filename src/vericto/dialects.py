@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-#: Dialects the Vericto engine evaluates today (vericto-engine 4.0.0). ``sqlite`` is
-#: planned: the wrappers accept it, and evaluate it once the server lists it.
+#: Dialects the Vericto engine evaluates (``sqlite`` since vericto-engine 4.1.0). The
+#: wrappers still ask the server (``GET /api/v1/meta/config``) and refuse a dialect it
+#: does not list.
 KNOWN_DIALECTS = ("postgres", "mysql", "oracle", "mssql", "snowflake", "sqlite")
 
 _ALIASES = {
