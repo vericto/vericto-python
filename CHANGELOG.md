@@ -4,6 +4,42 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - unreleased
+
+Integrations for LangChain, LlamaIndex, dbt and Airflow, each a thin layer over
+the guard. Nothing changes for 0.1.0 code.
+
+### Added
+
+- `vericto[langchain]`: `vericto.langchain.VerictoSQLDatabase`, a
+  `langchain_community` `SQLDatabase` whose queries (and table-info sample rows)
+  are checked; a blocked query returns an explanation with the rule and the
+  suggested fix to the agent (`on_block="return"`, default) or raises
+  (`on_block="raise"`). Masked queries run rewritten. Plus
+  `VerictoCheckSQLTool`, a check-only tool.
+- `vericto[llamaindex]`: `vericto.llamaindex.VerictoSQLDatabase` for
+  `NLSQLTableQueryEngine` / `SQLTableRetrieverQueryEngine`, same behaviour.
+- `vericto[dbt]`: the `vericto-dbt check` command (also
+  `python -m vericto dbt check`). It reads `target/manifest.json` after
+  `dbt compile`, checks compiled models, snapshots and hooks with the CI-check
+  API (`POST /api/v1/ci/check-key`, monthly CI-check allowance), maps the
+  adapter to the dialect, prints a table or writes JSON / SARIF, and exits as
+  vericto-cli does (`--fail-on blocked|flagged|any`). It honours the workspace's
+  `sanitized` telemetry mode with a port of vericto-cli's literal sanitizer.
+- `vericto[airflow]`: `vericto.airflow.VerictoSQLExecuteQueryOperator` and the
+  cluster policy `vericto.airflow.policy.guard_sql_tasks`. Both check the rendered
+  SQL, statement by statement, before any of it runs. A block fails the task
+  without retries (`VerictoTaskBlocked`). The dialect comes from the connection
+  type or from `vericto_dialect` in the connection extra. Tested on Airflow 3.3.2
+  and 2.11.2.
+- `vericto.sqlalchemy.is_instrumented(engine)`.
+- `vericto.ci_api.CiCheckClient`, a client for the CI-check API.
+
+### Changed
+
+- `copy.deepcopy` of a `Vericto` guard returns the same guard, so frameworks
+  that deep-copy the objects holding it (Airflow operators) keep working.
+
 ## [0.1.0] - unreleased
 
 First release: Vericto checks in front of Python database drivers, evaluated by
@@ -37,4 +73,5 @@ the Vericto Runtime API (`POST /api/v1/proxy/query`).
 - The Vericto engine does not evaluate the `sqlite` dialect yet: the SQLite
   wrappers raise `VerictoUnsupportedDialect` until the server lists it.
 
+[0.2.0]: https://github.com/vericto/vericto-python/releases/tag/v0.2.0
 [0.1.0]: https://github.com/vericto/vericto-python/releases/tag/v0.1.0

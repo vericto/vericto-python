@@ -1,0 +1,7 @@
+# Airflow 3 test environment. Installed with the official constraints file:
+#   -c https://raw.githubusercontent.com/apache/airflow/constraints-3.3.2/constraints-3.13.txt
+apache-airflow==3.3.2
+apache-airflow-providers-common-sql==2.1.1
+apache-airflow-providers-sqlite==4.3.3
+pytest==8.4.2
+pytest-httpserver==1.1.3

@@ -1,0 +1,33 @@
+# .github/workflows/dbt-vericto.yml: check a dbt project's compiled SQL with Vericto
+# on every pull request, with the findings shown as code-scanning annotations.
+name: dbt / Vericto
+on:
+  pull_request:
+    paths: ["models/**", "snapshots/**", "macros/**", "dbt_project.yml"]
+
+permissions:
+  contents: read
+  security-events: write # upload-sarif
+
+jobs:
+  vericto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Pin both: your dbt adapter and vericto.
+      - run: pip install "dbt-snowflake==1.10.*" "vericto[dbt]==0.2.0"
+      # `dbt compile` needs a profile; a CI target with a read-only role is enough.
+      - run: dbt compile --target ci
+        env:
+          DBT_PROFILES_DIR: ./ci
+          SNOWFLAKE_PASSWORD: ${{ secrets.DBT_CI_SNOWFLAKE_PASSWORD }}
+      - run: vericto-dbt check --format sarif --output vericto.sarif
+        env:
+          VERICTO_API_KEY: ${{ secrets.VERICTO_API_KEY }} # scope ci_dryrun:execute
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: vericto.sarif
