@@ -7,7 +7,7 @@ name = "vericto"
 dynamic = ["version"]
 description = "Check every SQL statement with Vericto before it runs: thin wrappers for snowflake-connector-python, sqlite3, SQLAlchemy and any DB-API driver."
 readme = "README.md"
-license = "LicenseRef-Elastic-2.0"
+license = "Elastic-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.9"
 authors = [{ name = "Vericto", email = "security@vericto.com" }]
@@ -15,7 +15,6 @@ keywords = ["sql", "firewall", "security", "snowflake", "sqlite", "sqlalchemy", 
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
-  "License :: Other/Proprietary License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",

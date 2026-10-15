@@ -1,0 +1,86 @@
+# Lint, type-check, test and build on every PR into main and every push to main.
+#
+# Runners: while the repository is private, jobs run on Vericto's self-hosted spot
+# runners (as vericto-fmw does). When it goes public, set the repository variable
+# CI_RUNS_ON to "ubuntu-latest" (JSON string, quotes included) to move to the
+# free GitHub-hosted runners; no workflow edit is needed.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.10.8"
+
+jobs:
+  lint:
+    name: Lint and type-check
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","x64","vericto-spot"]') }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.13"
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+
+  test:
+    name: Test (Python ${{ matrix.python }})
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","x64","vericto-spot"]') }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest supported, a middle one, and the newest.
+        python: ["3.9", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked
+      - run: uv run pytest
+
+  build:
+    name: Build sdist and wheel
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","x64","vericto-spot"]') }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.13"
+      - run: uv build
+      - name: The wheel carries the type marker and nothing from tests
+        run: |
+          uv run --no-project --python 3.13 python -m zipfile -l dist/*.whl | tee "$RUNNER_TEMP/wheel.txt"
+          grep -q 'vericto/py.typed' "$RUNNER_TEMP/wheel.txt"
+          if grep -q 'tests/' "$RUNNER_TEMP/wheel.txt"; then echo "tests/ in the wheel"; exit 1; fi
+      - name: Install the wheel in a clean environment and import it
+        run: |
+          uv venv --python 3.13 "$RUNNER_TEMP/wheel-check"
+          uv pip install --python "$RUNNER_TEMP/wheel-check" dist/*.whl
+          "$RUNNER_TEMP/wheel-check"/bin/python -c "import vericto, vericto.sqlite, vericto.dbapi; print(vericto.__version__)"
