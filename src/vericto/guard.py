@@ -1,0 +1,270 @@
+"""The guard: turns verdicts into "run this SQL" or "raise"."""
+
+from __future__ import annotations
+
+import logging
+import os
+import threading
+import time
+import warnings
+from collections import OrderedDict
+from dataclasses import replace
+from typing import Callable, Iterable, List, Optional
+
+from .dialects import normalize_dialect
+from .errors import (
+    VerictoBlocked,
+    VerictoConfigError,
+    VerictoFailOpenWarning,
+    VerictoFlaggedWarning,
+    VerictoUnavailable,
+    VerictoUnsupportedDialect,
+)
+from .evaluator import Evaluator
+from .placeholders import from_evaluation_text, to_evaluation_text
+from .runtime_api import DEFAULT_MAX_RETRIES, RuntimeApiEvaluator
+from .verdict import Decision, Verdict
+
+logger = logging.getLogger("vericto")
+
+FAIL_MODES = ("closed", "open")
+
+VerdictCallback = Callable[[Verdict], None]
+
+
+class Vericto:
+    """Checks SQL with Vericto before it runs.
+
+    One instance is meant to be shared by the whole process (it is thread-safe and
+    pools its HTTP connections). The driver wrappers call :meth:`enforce` for every
+    statement; you can call it yourself around any other driver.
+
+    Args:
+        evaluator: what evaluates statements. Defaults to a
+            :class:`~vericto.RuntimeApiEvaluator` built from the keyword arguments below
+            and the ``VERICTO_*`` environment variables.
+        api_key, database_id, api_url, timeout, max_retries: passed to the default
+            evaluator.
+        fail_mode: ``"closed"`` (default, or ``VERICTO_FAIL_MODE``): when Vericto cannot
+            answer, raise :class:`~vericto.VerictoUnavailable` and do not run the
+            statement. ``"open"``: run it unevaluated and emit a
+            :class:`~vericto.VerictoFailOpenWarning`.
+        cache_ttl: seconds to reuse a verdict for the same ``(sql, dialect)``. ``0``
+            (default) disables the cache; see the README before enabling it.
+        cache_size: maximum number of cached verdicts.
+        on_verdict: called with every verdict, including ``UNEVALUATED`` ones under
+            fail-open and ``BLOCKED`` ones (before the exception is raised).
+        warn_on_flag: also emit a :class:`~vericto.VerictoFlaggedWarning` for
+            flagged statements (they are always logged on the ``vericto`` logger).
+    """
+
+    def __init__(
+        self,
+        evaluator: Optional[Evaluator] = None,
+        *,
+        api_key: Optional[str] = None,
+        database_id: Optional[str] = None,
+        api_url: Optional[str] = None,
+        timeout: Optional[float] = None,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        fail_mode: Optional[str] = None,
+        cache_ttl: float = 0.0,
+        cache_size: int = 1024,
+        on_verdict: Optional[VerdictCallback] = None,
+        warn_on_flag: bool = False,
+    ) -> None:
+        if evaluator is None:
+            evaluator = RuntimeApiEvaluator(
+                api_key, database_id=database_id, api_url=api_url, timeout=timeout, max_retries=max_retries
+            )
+        self.evaluator = evaluator
+
+        mode = (fail_mode if fail_mode is not None else os.environ.get("VERICTO_FAIL_MODE", "closed")).strip().lower()
+        if mode not in FAIL_MODES:
+            raise VerictoConfigError(f"fail_mode must be 'closed' or 'open', got {mode!r}.")
+        self.fail_mode = mode
+        if cache_ttl < 0 or cache_size < 1:
+            raise VerictoConfigError("cache_ttl must be >= 0 and cache_size >= 1.")
+        self._cache = _VerdictCache(cache_ttl, cache_size) if cache_ttl > 0 else None
+        self.on_verdict = on_verdict
+        self.warn_on_flag = warn_on_flag
+
+    def __repr__(self) -> str:
+        return f"Vericto(evaluator={self.evaluator!r}, fail_mode={self.fail_mode!r})"
+
+    # -- capabilities -------------------------------------------------------------
+
+    def require_dialect(self, dialect: str) -> str:
+        """Fail fast if the server reports that it does not evaluate ``dialect``.
+
+        Returns the normalized dialect id. When the server cannot be asked, nothing is
+        raised here: each statement is then handled by the fail mode.
+        """
+        name = normalize_dialect(dialect)
+        supported = self.evaluator.supported_dialects()
+        if supported is not None and name not in supported:
+            api_url = getattr(self.evaluator, "api_url", "the configured evaluator")
+            raise VerictoUnsupportedDialect(name, supported, str(api_url))
+        return name
+
+    # -- evaluation ---------------------------------------------------------------
+
+    def check(self, sql: str, dialect: str) -> Verdict:
+        """Evaluate ``sql`` and return the verdict, whatever it is.
+
+        Does not apply the fail mode and does not raise on ``BLOCKED``: use it to ask,
+        and :meth:`enforce` to guard an execution. Raises
+        :class:`~vericto.VerictoUnavailable` or :class:`~vericto.VerictoConfigError`.
+        """
+        if not isinstance(sql, str):
+            raise TypeError(f"vericto: expected the SQL text as str, got {type(sql).__name__}.")
+        name = self.require_dialect(dialect)
+        if self._cache is not None:
+            hit = self._cache.get(sql, name)
+            if hit is not None:
+                return hit
+        verdict = self.evaluator.evaluate(sql, name)
+        if self._cache is not None and verdict.decision is not Decision.UNEVALUATED:
+            self._cache.put(verdict)
+        return verdict
+
+    def enforce(self, sql: str, dialect: str, *, paramstyle: Optional[str] = None) -> Verdict:
+        """Evaluate ``sql`` and apply the decision.
+
+        ``paramstyle`` is the driver's DB-API paramstyle, given only when the statement
+        is executed with parameters: ``format``/``pyformat`` markers (``%s``,
+        ``%(name)s``) are then evaluated as the dialect's own placeholders (see
+        :mod:`vericto.placeholders`). Values are never sent.
+
+        * ``BLOCKED``: raises :class:`~vericto.VerictoBlocked`.
+        * ``FLAGGED``, ``MONITORED``, ``PARSE_ERROR`` (allowed by the workspace
+          policy): logged and passed to ``on_verdict``; the statement may run.
+        * a sensitive-column mask: :attr:`Verdict.sql_to_execute` is the rewrite.
+        * Vericto unavailable: raises under ``fail_mode="closed"``; returns an
+          ``UNEVALUATED`` verdict under ``"open"``.
+
+        Returns the verdict; run :attr:`Verdict.sql_to_execute`.
+        """
+        if not isinstance(sql, str):
+            raise TypeError(f"vericto: expected the SQL text as str, got {type(sql).__name__}.")
+        name = normalize_dialect(dialect)
+        evaluation_sql, mapping = to_evaluation_text(sql, name, paramstyle)
+        try:
+            verdict = self.check(evaluation_sql, name)
+        except VerictoUnavailable as exc:
+            if self.fail_mode == "closed":
+                logger.error("vericto: no verdict, statement not executed (fail_mode=closed): %s", exc)
+                raise
+            verdict = Verdict.unevaluated(sql, name, str(exc))
+            logger.warning("vericto: no verdict, statement executed unevaluated (fail_mode=open): %s", exc)
+            warnings.warn(
+                f"Vericto could not evaluate the statement and fail_mode is 'open', so it ran unchecked: {exc}",
+                VerictoFailOpenWarning,
+                stacklevel=3,
+            )
+            self._notify(verdict)
+            return verdict
+
+        if mapping is not None:
+            rewritten = verdict.rewritten_query
+            verdict = replace(
+                verdict,
+                sql=sql,
+                rewritten_query=from_evaluation_text(rewritten, mapping) if rewritten else None,
+            )
+        self._notify(verdict)
+        self._log(verdict)
+        if verdict.blocked:
+            raise VerictoBlocked(verdict, sql)
+        if verdict.decision is Decision.FLAGGED and self.warn_on_flag:
+            warnings.warn(
+                f"Vericto flagged the statement ({verdict.rule_code or 'no rule code'}).",
+                VerictoFlaggedWarning,
+                stacklevel=3,
+            )
+        return verdict
+
+    def prepare(self, sql: str, dialect: str, *, paramstyle: Optional[str] = None) -> str:
+        """:meth:`enforce` and return the SQL text to execute."""
+        return self.enforce(sql, dialect, paramstyle=paramstyle).sql_to_execute
+
+    def enforce_all(self, statements: Iterable[str], dialect: str) -> List[Verdict]:
+        """Enforce a batch: every statement is evaluated before any of them runs.
+
+        A block anywhere raises before the first statement executes, so a script never
+        stops half-applied because of Vericto.
+        """
+        return [self.enforce(statement, dialect) for statement in statements]
+
+    def clear_cache(self) -> None:
+        if self._cache is not None:
+            self._cache.clear()
+
+    # -- internals ----------------------------------------------------------------
+
+    def _notify(self, verdict: Verdict) -> None:
+        if self.on_verdict is None:
+            return
+        try:
+            self.on_verdict(verdict)
+        except Exception:  # a broken callback must not change the decision
+            logger.exception("vericto: on_verdict callback raised")
+
+    @staticmethod
+    def _log(verdict: Verdict) -> None:
+        # The SQL text is never logged: it can carry personal data in literals.
+        extra = f"rule={verdict.rule_code or '-'} severity={verdict.severity or '-'} event_id={verdict.event_id or '-'}"
+        if verdict.blocked:
+            logger.warning("vericto: statement BLOCKED %s", extra)
+        elif verdict.decision is Decision.FLAGGED:
+            logger.warning("vericto: statement FLAGGED %s", extra)
+        elif verdict.decision is Decision.PARSE_ERROR:
+            logger.warning("vericto: statement not parsed, allowed by workspace policy %s", extra)
+        elif verdict.decision is Decision.MONITORED:
+            logger.info("vericto: statement MONITORED %s", extra)
+        if verdict.masked:
+            logger.info("vericto: running the masked rewrite %s", extra)
+
+
+class _VerdictCache:
+    """Small thread-safe TTL + LRU cache of server verdicts.
+
+    Keyed by ``(sql, dialect)``; the evaluator already binds the database. When a
+    response carries a ``ruleset_version`` different from the one the cache was
+    filled under, every entry is dropped.
+    """
+
+    def __init__(self, ttl: float, size: int) -> None:
+        self._ttl = ttl
+        self._size = size
+        self._lock = threading.Lock()
+        self._items: OrderedDict[tuple[str, str], tuple[float, Verdict]] = OrderedDict()
+        self._ruleset: Optional[str] = None
+
+    def get(self, sql: str, dialect: str) -> Optional[Verdict]:
+        key = (sql, dialect)
+        with self._lock:
+            item = self._items.get(key)
+            if item is None:
+                return None
+            stored_at, verdict = item
+            if time.monotonic() - stored_at > self._ttl:
+                del self._items[key]
+                return None
+            self._items.move_to_end(key)
+        return replace(verdict, cached=True)
+
+    def put(self, verdict: Verdict) -> None:
+        with self._lock:
+            if verdict.ruleset_version and verdict.ruleset_version != self._ruleset:
+                if self._ruleset is not None:
+                    self._items.clear()
+                self._ruleset = verdict.ruleset_version
+            self._items[(verdict.sql, verdict.dialect)] = (time.monotonic(), verdict)
+            self._items.move_to_end((verdict.sql, verdict.dialect))
+            while len(self._items) > self._size:
+                self._items.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()

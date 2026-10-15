@@ -1,0 +1,94 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vericto"
+dynamic = ["version"]
+description = "Check every SQL statement with Vericto before it runs: thin wrappers for snowflake-connector-python, sqlite3, SQLAlchemy and any DB-API driver."
+readme = "README.md"
+license = "LicenseRef-Elastic-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+authors = [{ name = "Vericto", email = "security@vericto.com" }]
+keywords = ["sql", "firewall", "security", "snowflake", "sqlite", "sqlalchemy", "ai-agents", "vericto"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: Other/Proprietary License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Database",
+  "Topic :: Security",
+  "Typing :: Typed",
+]
+# urllib3 only: no transitive dependencies, thread-safe connection pooling, and it is
+# already installed wherever snowflake-connector-python or requests is.
+dependencies = ["urllib3>=1.26.18,<3"]
+
+[project.optional-dependencies]
+snowflake = ["snowflake-connector-python>=3.0"]
+sqlalchemy = ["sqlalchemy>=1.4"]
+
+[project.urls]
+Homepage = "https://vericto.com"
+Documentation = "https://github.com/vericto/vericto-python#readme"
+Source = "https://github.com/vericto/vericto-python"
+Changelog = "https://github.com/vericto/vericto-python/blob/main/CHANGELOG.md"
+Issues = "https://github.com/vericto/vericto-python/issues"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-httpserver>=1.1",
+  "ruff>=0.15",
+  "mypy>=1.14",
+  "sqlalchemy>=2.0",
+  "snowflake-connector-python>=3.12",
+]
+
+[tool.hatch.version]
+path = "src/vericto/_version.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/vericto", "tests", "examples", "README.md", "README.es.md", "CHANGELOG.md", "LICENSE", "SECURITY.md"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vericto"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = ["error::vericto.errors.VerictoFailOpenWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = [
+  "UP006", "UP007", "UP035", "UP045",  # keep typing.Optional/List: Python 3.9 is supported
+  "S311",                              # random is for retry jitter, not security
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S608"]
+"examples/**" = ["S101", "S105", "S608"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src/vericto", "tests", "examples"]
+
+[[tool.mypy.overrides]]
+module = ["snowflake.*", "pytest_httpserver.*", "werkzeug.*"]
+ignore_missing_imports = true
