@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -115,6 +116,14 @@ def ci(httpserver: HTTPServer) -> Iterator[FakeCi]:
     f.install()
     yield f
     httpserver.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_ci_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests run in CI themselves: the runner's GITHUB_* must not leak into them.
+    for name in list(os.environ):
+        if name.startswith(("GITHUB_", "GITLAB_", "CI_")):
+            monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture
