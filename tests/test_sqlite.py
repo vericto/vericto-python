@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 import vericto.sqlite
-from tests.conftest import TODAY_DIALECTS, FakeVericto, blocked, masked
+from tests.conftest import DIALECTS_WITHOUT_SQLITE, FakeVericto, blocked, masked
 from vericto import Vericto, VerictoBlocked, VerictoUnsupportedDialect
 
 
@@ -98,7 +98,7 @@ def test_split_script_respects_triggers_strings_and_comments() -> None:
 
 
 def test_connect_refuses_when_the_server_lacks_sqlite(fake: FakeVericto, guard: Vericto, tmp_path: Path) -> None:
-    fake.dialects = list(TODAY_DIALECTS)
+    fake.dialects = list(DIALECTS_WITHOUT_SQLITE)
     with pytest.raises(VerictoUnsupportedDialect, match="'sqlite' dialect"):
         vericto.sqlite.connect(str(tmp_path / "x.db"), guard=guard)
     assert not (tmp_path / "x.db").exists()

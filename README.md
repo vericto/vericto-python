@@ -192,14 +192,18 @@ matters more than a per-execution audit record, and keep the TTL short.
 ## SQLite status
 
 SQLite has no server, so there is no Vericto proxy for it: this wrapper is the
-enforcement point. The wrapper is ready, but the **Vericto engine does not
-evaluate the `sqlite` dialect yet** (the server lists `postgres`, `mysql`,
-`oracle`, `mssql`, `snowflake`). `vericto.sqlite.connect()` and
-`vericto.sqlalchemy.instrument()` on a SQLite engine ask the server
-(`GET /api/v1/meta/config`) and raise `VerictoUnsupportedDialect` before any SQL
-runs while it is not listed. They start working, unchanged, when the server
-adds it. There is deliberately no fallback to another dialect: evaluating SQLite
-as PostgreSQL would give wrong answers.
+enforcement point. The **Vericto server evaluates the `sqlite` dialect**
+(vericto-engine 4.1.0+; `GET /api/v1/meta/config` lists `postgres`, `mysql`,
+`oracle`, `mssql`, `snowflake`, `sqlite`), including SQLite-specific rules such
+as `ATTACH DATABASE` (VERICTO-098), `PRAGMA foreign_keys = OFF` (VERICTO-099),
+`load_extension()` (VERICTO-100) and `VACUUM INTO` (VERICTO-101).
+
+`vericto.sqlite.connect()` and `vericto.sqlalchemy.instrument()` on a SQLite
+engine still ask the server first and raise `VerictoUnsupportedDialect` before
+any SQL runs if it does not list `sqlite` (for example an older self-hosted
+server). There is deliberately no fallback to another dialect: evaluating SQLite
+as PostgreSQL would give wrong answers. See [Live tests](#live-tests) for an
+end-to-end check against a real server.
 
 ## Enforcement boundary
 
@@ -398,9 +402,55 @@ scripted LLMs and no network calls:
 uv venv /tmp/vericto-lc && uv pip install --python /tmp/vericto-lc -e . -r ci/requirements-langchain.txt
 /tmp/vericto-lc/bin/python -m pytest tests/test_langchain.py
 ```
-`tests/live/` holds an opt-in test against a real Snowflake account (its own
-temporary schema, dropped at the end), skipped unless `VERICTO_LIVE_SNOWFLAKE=1`
-and the `SNOWFLAKE_*` variables it lists are set.
+
+### Live tests
+
+`tests/live/` holds opt-in tests against real services. They skip unless their
+variables are set and never run in CI.
+
+- `test_snowflake_live.py`: a real Snowflake account (its own temporary schema,
+  dropped at the end) with the local Runtime API stand-in. Set
+  `VERICTO_LIVE_SNOWFLAKE=1` and the `SNOWFLAKE_*` variables it lists.
+- `test_sqlite_live.py`: a real SQLite file in a temporary directory, guarded by
+  `vericto.sqlite.connect()` against a **real Vericto Runtime API**. Benign
+  statements (`CREATE TABLE`, `INSERT` with `?` binds, `executemany`, UPSERT
+  `ON CONFLICT ... DO UPDATE`, `SELECT`, `DELETE ... WHERE`) must run; `DELETE`
+  without `WHERE` (VERICTO-001), `ATTACH DATABASE` (VERICTO-098),
+  `load_extension()` (VERICTO-100) and `VACUUM INTO` (VERICTO-101) must raise
+  `VerictoBlocked` before SQLite sees them (checked with SQLite's trace callback,
+  the file's SHA-256 and the absence of the attached/copy files);
+  `PRAGMA foreign_keys = OFF` (VERICTO-099) must run with a `VerictoFlaggedWarning`;
+  an `executescript` with a blocked statement in the middle must run none of it.
+  The database's workspace must use the default rules; a run makes about 30
+  evaluations, counted against the workspace's monthly quota.
+
+| Variable | Value |
+|---|---|
+| `VERICTO_LIVE_SQLITE` | `1` |
+| `VERICTO_API_KEY` | a `vtro_...` key with the `proxy:evaluate` scope |
+| `VERICTO_API_URL` | `https://api-staging.vericto.com` (or another server that lists `sqlite`) |
+| `VERICTO_DATABASE_ID` | the id of a database of dialect `sqlite` in that workspace |
+
+On the host (Python 3.9+, the SQLite file goes to pytest's temporary directory):
+
+```bash
+export VERICTO_LIVE_SQLITE=1 VERICTO_API_URL=https://api-staging.vericto.com
+export VERICTO_API_KEY=vtro_... VERICTO_DATABASE_ID=...
+uv run pytest tests/live/test_sqlite_live.py -v
+```
+
+Or in a throwaway `python:3.13-slim` container (the repository is mounted
+read-only and copied; the SQLite file never leaves the container):
+
+```bash
+docker run --rm -v "$PWD":/src:ro \
+  -e VERICTO_LIVE_SQLITE=1 -e VERICTO_API_KEY -e VERICTO_API_URL -e VERICTO_DATABASE_ID \
+  python:3.13-slim sh -c 'cp -r /src /work && cd /work && rm -rf .venv \
+    && pip install --quiet --no-cache-dir . pytest==8.4.2 pytest-httpserver==1.1.3 \
+    && python -m pytest tests/live/test_sqlite_live.py -v -p no:cacheprovider'
+```
+
+A skipped run (`1 skipped` per test) means a variable is missing.
 
 ## Security
 
@@ -439,6 +489,7 @@ la regla y la corrección sugerida en vez de una excepción), `vericto-dbt check
 salida JSON/SARIF) y `vericto.airflow` (operador y política de clúster). Ver
 [Integrations](#integrations).
 
-SQLite: el wrapper está listo, pero el motor de Vericto todavía no evalúa el
-dialecto `sqlite`; hasta que el servidor lo anuncie, `vericto.sqlite.connect()`
-falla con `VerictoUnsupportedDialect` sin ejecutar nada.
+SQLite: el servidor de Vericto evalúa el dialecto `sqlite` (vericto-engine
+4.1.0+). `vericto.sqlite.connect()` igual consulta `GET /api/v1/meta/config` y,
+si un servidor no lo anuncia, falla con `VerictoUnsupportedDialect` sin ejecutar
+nada.

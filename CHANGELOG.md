@@ -4,6 +4,26 @@ All notable changes to this package are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Documentation: the Vericto server now evaluates the `sqlite` dialect
+  (vericto-engine 4.1.0; `GET /api/v1/meta/config` lists it), so
+  `vericto.sqlite` and SQLAlchemy/LangChain/LlamaIndex/Airflow on SQLite work
+  against it. The 0.1.0 known limitation no longer applies to such servers.
+  Unchanged behaviour: the wrappers still ask `/meta/config` and raise
+  `VerictoUnsupportedDialect`, before any SQL runs, against a server that does
+  not list `sqlite`.
+
+### Added
+
+- `tests/live/test_sqlite_live.py`: an opt-in end-to-end test of
+  `vericto.sqlite` against a real Runtime API (allowed statements, UPSERT, the
+  SQLite rules VERICTO-098/099/100/101, DELETE without WHERE, scripts with a
+  blocked statement). Skipped unless `VERICTO_LIVE_SQLITE=1` and the
+  `VERICTO_*` variables are set; see "Live tests" in the README.
+
 ## [0.2.0] - unreleased
 
 Integrations for LangChain, LlamaIndex, dbt and Airflow, each a thin layer over

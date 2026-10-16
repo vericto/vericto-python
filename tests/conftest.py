@@ -15,7 +15,8 @@ from vericto import RuntimeApiEvaluator, Vericto
 API_KEY = "vtro_test_0123456789abcdef"
 DATABASE_ID = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
 ALL_DIALECTS = ["postgres", "mysql", "oracle", "mssql", "snowflake", "sqlite"]
-TODAY_DIALECTS = ["postgres", "mysql", "oracle", "mssql", "snowflake"]
+# A server older than vericto-engine 4.1.0, which did not list sqlite.
+DIALECTS_WITHOUT_SQLITE = ["postgres", "mysql", "oracle", "mssql", "snowflake"]
 
 Rule = Callable[[str, str], Optional[Dict[str, Any]]]
 

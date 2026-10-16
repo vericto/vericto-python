@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 import vericto.sqlalchemy
-from tests.conftest import TODAY_DIALECTS, FakeVericto, blocked, masked
+from tests.conftest import DIALECTS_WITHOUT_SQLITE, FakeVericto, blocked, masked
 from vericto import Vericto, VerictoBlocked, VerictoUnsupportedDialect, normalize_dialect
 
 
@@ -54,7 +54,7 @@ def test_remove_uninstruments(fake: FakeVericto, guard: Vericto, engine: Engine)
 
 
 def test_unsupported_dialect_fails_at_instrument_time(fake: FakeVericto, guard: Vericto, engine: Engine) -> None:
-    fake.dialects = list(TODAY_DIALECTS)
+    fake.dialects = list(DIALECTS_WITHOUT_SQLITE)
     with pytest.raises(VerictoUnsupportedDialect):
         vericto.sqlalchemy.instrument(engine, guard=guard)
 
