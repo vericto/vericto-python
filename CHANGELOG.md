@@ -37,12 +37,16 @@ the guard. Nothing changes for 0.1.0 code.
 - `vericto.sqlalchemy.is_instrumented(engine)`.
 - `vericto.ci_api.CiCheckClient`, a client for the CI-check API.
 
+- `tests/live/test_sqlite_live.py`: an opt-in end-to-end test of
+  `vericto.sqlite` against a real Runtime API (allowed statements, UPSERT, the
+  SQLite rules VERICTO-098/099/100/101, DELETE without WHERE, scripts with a
+  blocked statement). Skipped unless `VERICTO_LIVE_SQLITE=1` and the
+  `VERICTO_*` variables are set; see "Live tests" in the README.
+
 ### Changed
 
 - `copy.deepcopy` of a `Vericto` guard returns the same guard, so frameworks
   that deep-copy the objects holding it (Airflow operators) keep working.
-
-### Changed
 
 - Documentation: the Vericto server now evaluates the `sqlite` dialect
   (vericto-engine 4.1.0; `GET /api/v1/meta/config` lists it), so
@@ -51,14 +55,6 @@ the guard. Nothing changes for 0.1.0 code.
   Unchanged behaviour: the wrappers still ask `/meta/config` and raise
   `VerictoUnsupportedDialect`, before any SQL runs, against a server that does
   not list `sqlite`.
-
-### Added
-
-- `tests/live/test_sqlite_live.py`: an opt-in end-to-end test of
-  `vericto.sqlite` against a real Runtime API (allowed statements, UPSERT, the
-  SQLite rules VERICTO-098/099/100/101, DELETE without WHERE, scripts with a
-  blocked statement). Skipped unless `VERICTO_LIVE_SQLITE=1` and the
-  `VERICTO_*` variables are set; see "Live tests" in the README.
 
 ## [0.1.0] - never published
 
