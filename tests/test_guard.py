@@ -218,3 +218,134 @@ def test_deepcopy_returns_the_same_guard(guard: Vericto) -> None:
 
     holder = {"guard": guard}
     assert copy.deepcopy(holder)["guard"] is guard
+
+
+def test_default_evaluator_is_built_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.conftest import API_KEY, DATABASE_ID
+    from vericto import RuntimeApiEvaluator
+
+    monkeypatch.setenv("VERICTO_API_KEY", API_KEY)
+    monkeypatch.setenv("VERICTO_DATABASE_ID", DATABASE_ID)
+    monkeypatch.setenv("VERICTO_API_URL", "https://vericto.example")
+    monkeypatch.setenv("VERICTO_FAIL_MODE", " OPEN ")
+    guard = Vericto(timeout=3, max_retries=0)
+    assert isinstance(guard.evaluator, RuntimeApiEvaluator)
+    assert guard.evaluator.api_url == "https://vericto.example"
+    assert guard.evaluator.timeout == 3.0 and guard.evaluator.max_retries == 0
+    assert guard.fail_mode == "open"
+    assert "fail_mode='open'" in repr(guard) and API_KEY not in repr(guard)
+
+
+def test_missing_configuration_fails_at_construction() -> None:
+    with pytest.raises(VerictoConfigError, match="VERICTO_API_KEY"):
+        Vericto()
+
+
+@pytest.mark.parametrize(("ttl", "size"), [(-1, 10), (1, 0)])
+def test_bad_cache_settings(ttl: float, size: int) -> None:
+    with pytest.raises(VerictoConfigError, match="cache_ttl"):
+        Vericto(StubEvaluator(), cache_ttl=ttl, cache_size=size)
+
+
+def test_cache_evicts_the_least_recently_used_and_can_be_cleared() -> None:
+    stub = StubEvaluator()
+    guard = Vericto(stub, cache_ttl=60, cache_size=2)
+    for sql in ("A", "B", "A", "C", "A", "B"):
+        guard.enforce(sql, "postgres")
+    # A, B miss; A hits (and becomes most recent); C evicts B; A hits; B misses again.
+    assert [c[0] for c in stub.calls] == ["A", "B", "C", "B"]
+    guard.clear_cache()
+    guard.enforce("A", "postgres")
+    assert [c[0] for c in stub.calls][-1] == "A"
+    Vericto(stub).clear_cache()  # no cache: a no-op
+
+
+def test_cache_never_stores_unevaluated_or_answers_blocks_as_allowed() -> None:
+    sql = "DELETE FROM t"
+    stub = StubEvaluator({sql: v(Decision.BLOCKED, sql, rule_code="VERICTO-010")})
+    guard = Vericto(stub, cache_ttl=60)
+    for _ in range(2):
+        with pytest.raises(VerictoBlocked):
+            guard.enforce(sql, "postgres")
+    assert len(stub.calls) == 1  # the cached verdict still blocks
+
+    down = StubEvaluator(error=VerictoUnavailable("down"))
+    open_guard = Vericto(down, fail_mode="open", cache_ttl=60)
+    with pytest.warns(VerictoFailOpenWarning):
+        open_guard.enforce("SELECT 1", "postgres")
+    down.error = None
+    assert open_guard.enforce("SELECT 1", "postgres").decision is Decision.ALLOWED
+    assert len(down.calls) == 2
+
+
+def test_check_does_not_apply_the_decision() -> None:
+    sql = "DROP TABLE t"
+    guard = Vericto(StubEvaluator({sql: v(Decision.BLOCKED, sql)}), fail_mode="open")
+    assert guard.check(sql, "postgres").blocked  # returned, not raised
+    with pytest.raises(TypeError):
+        guard.check(None, "postgres")  # type: ignore[arg-type]
+    down = Vericto(StubEvaluator(error=VerictoUnavailable("down")), fail_mode="open")
+    with pytest.raises(VerictoUnavailable):  # no fail mode in check()
+        down.check("SELECT 1", "postgres")
+
+
+def test_every_decision_is_logged_without_sql(caplog: pytest.LogCaptureFixture) -> None:
+    stub = StubEvaluator(
+        {
+            "P": v(Decision.PARSE_ERROR, "P", parse_error="unexpected token"),
+            "M": v(Decision.MONITORED, "M", rule_code="VERICTO-050"),
+            "R": v(Decision.ALLOWED, "R", rewritten_query="SELECT '***'", event_id="evt-7"),
+        }
+    )
+    guard = Vericto(stub)
+    with caplog.at_level(logging.INFO, logger="vericto"):
+        for sql in ("P", "M", "R"):
+            guard.enforce(sql, "postgres")
+    assert "not parsed, allowed by workspace policy" in caplog.text
+    assert "MONITORED rule=VERICTO-050" in caplog.text
+    assert "running the masked rewrite" in caplog.text and "event_id=evt-7" in caplog.text
+    assert "SELECT '***'" not in caplog.text
+
+
+def test_flag_warning_without_a_rule_code() -> None:
+    guard = Vericto(StubEvaluator({"X": v(Decision.FLAGGED, "X")}), warn_on_flag=True)
+    with pytest.warns(VerictoFlaggedWarning, match="no rule code"):
+        guard.enforce("X", "postgres")
+
+
+def test_percent_placeholders_are_evaluated_natively_and_the_mask_mapped_back() -> None:
+    evaluated = "SELECT email FROM users WHERE id = $1"
+    rewrite = "SELECT '***' AS email FROM users WHERE id = $1"
+    stub = StubEvaluator({evaluated: v(Decision.FLAGGED, evaluated, rewritten_query=rewrite)})
+    seen: List[Verdict] = []
+    verdict = Vericto(stub, on_verdict=seen.append).enforce(
+        "SELECT email FROM users WHERE id = %s", "postgres", paramstyle="format"
+    )
+    assert stub.calls == [(evaluated, "postgres")]
+    assert verdict.sql == "SELECT email FROM users WHERE id = %s"  # the application's text
+    assert verdict.sql_to_execute == "SELECT '***' AS email FROM users WHERE id = %s"
+    assert seen == [verdict]
+
+
+def test_blocked_with_percent_placeholders_reports_the_application_text() -> None:
+    evaluated = "DELETE FROM t WHERE a = $1 OR 1 = 1"
+    stub = StubEvaluator({evaluated: v(Decision.BLOCKED, evaluated, rule_code="VERICTO-012")})
+    with pytest.raises(VerictoBlocked) as info:
+        Vericto(stub).enforce("DELETE FROM t WHERE a = %s OR 1 = 1", "postgres", paramstyle="format")
+    assert info.value.sql == "DELETE FROM t WHERE a = %s OR 1 = 1"
+    assert info.value.verdict.sql == "DELETE FROM t WHERE a = %s OR 1 = 1"
+
+
+def test_enforce_all_on_an_empty_script() -> None:
+    stub = StubEvaluator()
+    assert Vericto(stub).enforce_all([], "postgres") == []
+    assert stub.calls == []
+
+
+def test_fail_open_in_a_batch_evaluates_everything() -> None:
+    stub = StubEvaluator(error=VerictoUnavailable("down"))
+    guard = Vericto(stub, fail_mode="open")
+    with pytest.warns(VerictoFailOpenWarning):
+        verdicts = guard.enforce_all(["SELECT 1", "SELECT 2"], "postgres")
+    assert [x.decision for x in verdicts] == [Decision.UNEVALUATED, Decision.UNEVALUATED]
+    assert [c[0] for c in stub.calls] == ["SELECT 1", "SELECT 2"]

@@ -407,3 +407,59 @@ def _reset_shared_guard() -> Iterator[None]:
 
     yield
     module._shared = None
+
+
+class _BrokenHook:
+    conn_type = "mysql"
+
+    @property
+    def connection(self) -> Any:
+        raise RuntimeError("no connection configured")
+
+
+def test_dialect_when_the_connection_cannot_be_read() -> None:
+    assert dialect_for_hook(_BrokenHook()) == "mysql"  # falls back to the hook's own conn_type
+    assert dialect_for_hook(_Hook("postgres", "not a mapping")) == "postgres"
+
+
+def test_non_text_sql_is_refused(fake: FakeVericto, guard: Vericto) -> None:
+    with pytest.raises(TypeError, match="str or list of str"):
+        check_task_sql(_Task(123), guard=guard)
+    assert fake.requests == []
+
+
+def test_list_sql_skips_blank_entries_and_keeps_a_list_when_masked(fake: FakeVericto, guard: Vericto) -> None:
+    fake.on(lambda sql: "email" in sql, masked("SELECT '***' AS email FROM users"))
+    task = _Task(["SELECT email FROM users", "  ", None])
+    verdicts = check_task_sql(task, guard=guard)
+    assert len(verdicts) == 1
+    assert task.sql == ["SELECT '***' AS email FROM users"]
+
+
+def test_positional_parameters_and_qmark_hooks(fake: FakeVericto, guard: Vericto) -> None:
+    check_task_sql(_Task("DELETE FROM users WHERE id = %s", parameters=(1,)), guard=guard)
+    assert fake.queries()[-1] == "DELETE FROM users WHERE id = $1"
+    task = _Task("DELETE FROM users WHERE id = ?", "sqlite", parameters=(1,))
+    task._hook.placeholder = "?"
+    check_task_sql(task, guard=guard)
+    assert fake.queries()[-1] == "DELETE FROM users WHERE id = ?"
+
+
+def test_shared_guard_is_built_once_from_the_environment(fake: FakeVericto, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vericto.airflow import shared_guard
+
+    monkeypatch.setenv("VERICTO_API_KEY", API_KEY)
+    monkeypatch.setenv("VERICTO_DATABASE_ID", DATABASE_ID)
+    monkeypatch.setenv("VERICTO_API_URL", fake.url)
+    first = shared_guard()
+    assert shared_guard() is first
+    check_task_sql(_Task("SELECT 1"))
+    assert fake.queries() == ["SELECT 1"]
+
+
+def test_policy_is_idempotent(guard: Vericto) -> None:
+    stock = SQLExecuteQueryOperator(task_id="stock", conn_id=CONN_ID, sql="SELECT 1")
+    assert guard_sql_tasks(stock, guard=guard) is True
+    hook = stock._pre_execute_hook
+    assert guard_sql_tasks(stock, guard=guard) is True
+    assert stock._pre_execute_hook is hook  # not wrapped twice

@@ -6,6 +6,40 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-18
+
+A bug-fix release: `vericto-dbt`'s sanitized mode follows vericto-cli 1.8.0
+again. Nothing else changes in the package.
+
+### Fixed
+
+- **Sanitized mode** (`vericto-dbt` in a workspace whose telemetry query mode is
+  `sanitized`): `vericto.sanitize` now applies vericto-cli 1.8.0's rules, so a
+  statement reads the same as with `vericto check`:
+  - Bind parameters already in the statement are kept. The digits of `$1` and
+    `?1` were read as a numeric literal, so `$1` (a PostgreSQL parameter, a
+    Snowflake stage column) became `$$1`, which opens a dollar-quoted string:
+    the server evaluated different SQL or answered `PARSE_ERROR`.
+  - Snowflake and SQLite get `?` placeholders, as MySQL does (they got `$1, $2,
+    ...`). On SQLite, `[name]` identifiers are copied as they are and `$name`
+    is a bind parameter, not a dollar quote.
+- `tests/fixtures/sanitize/vericto-cli-1.8.0.json` pins vericto-cli's own
+  sanitizer test vectors (`src/sanitize.rs` at 1.8.0), and the port must give
+  the same output for each; per-dialect cases cover PostgreSQL, MySQL, Oracle,
+  MSSQL, Snowflake and SQLite. The two `xfail` tests for this bug now pass.
+
+### Added
+
+- Tests for the alternate flows: the Runtime API down, slow, rate-limited, over
+  quota, answering 401/403/400 or a malformed body, under both fail modes; empty,
+  oversized and multi-statement SQL; bind parameters in every DB-API paramstyle;
+  `vericto.dbapi.wrap()` against a fake driver; Snowflake `execute_async`;
+  the CI-check client; the shared LangChain/LlamaIndex helpers. Line coverage is
+  99.8% and branch coverage 99.6% across the core and integration jobs (was 92.1%
+  and 80.2%). No change to the package itself.
+- CI fails a job under 80% line and branch coverage (`coverage` in the dev
+  group, `[tool.coverage]` in `pyproject.toml`); see README, "Coverage".
+
 ## [0.3.0] - 2026-10-18
 
 A support-policy release: Python 3.9 and Airflow 2 are dropped. The API is
@@ -132,6 +166,7 @@ the Vericto Runtime API (`POST /api/v1/proxy/query`).
 - The Vericto engine does not evaluate the `sqlite` dialect yet: the SQLite
   wrappers raise `VerictoUnsupportedDialect` until the server lists it.
 
+[0.3.1]: https://github.com/vericto/vericto-python/releases/tag/v0.3.1
 [0.3.0]: https://github.com/vericto/vericto-python/releases/tag/v0.3.0
 [0.2.0]: https://github.com/vericto/vericto-python/releases/tag/v0.2.0
 [0.1.0]: https://github.com/vericto/vericto-python/releases/tag/v0.1.0

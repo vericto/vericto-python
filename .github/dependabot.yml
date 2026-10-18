@@ -8,8 +8,12 @@ updates:
     commit-message:
       prefix: ci
 
+  # The uv updater also scans requirements files; ci/ belongs to the pip entry
+  # below, whose rules keep the Airflow pins in step with the constraints file.
   - package-ecosystem: uv
     directory: /
+    exclude-paths:
+      - "ci/**"
     schedule:
       interval: monthly
     open-pull-requests-limit: 2

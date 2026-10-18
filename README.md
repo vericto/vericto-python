@@ -408,6 +408,25 @@ uv venv /tmp/vericto-lc && uv pip install --python /tmp/vericto-lc -e . -r ci/re
 /tmp/vericto-lc/bin/python -m pytest tests/test_langchain.py
 ```
 
+### Coverage
+
+CI measures line and branch coverage and fails a job under **80%**
+(`fail_under` in `pyproject.toml`). The core job reports every module except the
+three integrations, whose framework it does not install; each integration job
+reports its own module (`langchain.py`, `llamaindex.py`, `dbt.py`, `airflow/`).
+The same checks locally:
+
+```bash
+uv run coverage run -m pytest
+uv run coverage report --omit="*/vericto/langchain.py,*/vericto/llamaindex.py,*/vericto/airflow/*"
+uv pip install --python /tmp/vericto-lc coverage==7.16.2
+/tmp/vericto-lc/bin/python -m coverage run -m pytest tests/test_langchain.py
+/tmp/vericto-lc/bin/python -m coverage report --include=src/vericto/langchain.py
+```
+
+A test that documents a known bug is marked `xfail(strict=True)` with the reason,
+so it fails the run as soon as the bug is fixed and the marker must go.
+
 ### Live tests
 
 `tests/live/` holds opt-in tests against real services. They skip unless their
@@ -451,7 +470,7 @@ read-only and copied; the SQLite file never leaves the container):
 docker run --rm -v "$PWD":/src:ro \
   -e VERICTO_LIVE_SQLITE=1 -e VERICTO_API_KEY -e VERICTO_API_URL -e VERICTO_DATABASE_ID \
   python:3.13-slim sh -c 'cp -r /src /work && cd /work && rm -rf .venv \
-    && pip install --quiet --no-cache-dir . pytest==9.1.1 pytest-httpserver==1.1.3 \
+    && pip install --quiet --no-cache-dir . pytest==9.1.1 pytest-httpserver==1.2.0 \
     && python -m pytest tests/live/test_sqlite_live.py -v -p no:cacheprovider'
 ```
 

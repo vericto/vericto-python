@@ -9,7 +9,7 @@ import pytest
 
 import vericto.sqlite
 from tests.conftest import DIALECTS_WITHOUT_SQLITE, FakeVericto, blocked, masked
-from vericto import Vericto, VerictoBlocked, VerictoUnsupportedDialect
+from vericto import RuntimeApiEvaluator, Vericto, VerictoBlocked, VerictoUnsupportedDialect
 
 
 @pytest.fixture
@@ -113,3 +113,96 @@ def test_foreign_cursor_factory_is_refused(db: vericto.sqlite.VerictoSQLiteConne
 def test_factory_argument_is_refused(guard: Vericto) -> None:
     with pytest.raises(TypeError):
         vericto.sqlite.connect(":memory:", guard=guard, factory=sqlite3.Connection)
+
+
+def test_a_connection_without_a_guard_refuses_to_run(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:", factory=vericto.sqlite.VerictoSQLiteConnection)
+    with pytest.raises(RuntimeError, match=r"not opened with vericto\.sqlite\.connect"):
+        conn.execute("SELECT 1")
+
+
+def test_cursor_factory_subclass_is_accepted(fake: FakeVericto, db: vericto.sqlite.VerictoSQLiteConnection) -> None:
+    class Mine(vericto.sqlite.VerictoSQLiteCursor):
+        pass
+
+    cur = db.cursor(Mine)
+    assert isinstance(cur, Mine)
+    fake.on(lambda sql: sql.startswith("DELETE"), blocked())
+    with pytest.raises(VerictoBlocked):
+        cur.execute("DELETE FROM users")
+    assert count(db) == 2
+
+
+def test_cursor_executemany_and_executescript_are_checked(fake: FakeVericto, db: sqlite3.Connection) -> None:
+    fake.on(lambda sql: sql.startswith("UPDATE"), blocked("VERICTO-002"))
+    cur = db.cursor()
+    with pytest.raises(VerictoBlocked):
+        cur.executemany("UPDATE users SET email = ?", [("x",), ("y",)])
+    with pytest.raises(VerictoBlocked):
+        cur.executescript("SELECT 1; UPDATE users SET email = 'z';")
+    assert db.execute("SELECT email FROM users WHERE id = 1").fetchone() == ("ana@example.com",)
+
+
+def test_named_and_numbered_parameters_are_sent_as_written(fake: FakeVericto, db: sqlite3.Connection) -> None:
+    assert db.execute("SELECT email FROM users WHERE id = :id", {"id": 2}).fetchone() == ("bo@example.com",)
+    assert db.execute("SELECT email FROM users WHERE id = ?1", (1,)).fetchone() == ("ana@example.com",)
+    assert fake.queries()[-2:] == ["SELECT email FROM users WHERE id = :id", "SELECT email FROM users WHERE id = ?1"]
+
+
+def test_flagged_statement_runs_and_warns(fake: FakeVericto, evaluator: RuntimeApiEvaluator, tmp_path: Path) -> None:
+    from tests.conftest import flagged
+    from vericto import VerictoFlaggedWarning
+
+    fake.on(lambda sql: sql == "PRAGMA foreign_keys = OFF", flagged("VERICTO-099"))
+    conn = vericto.sqlite.connect(str(tmp_path / "f.db"), guard=Vericto(evaluator, warn_on_flag=True))
+    with pytest.warns(VerictoFlaggedWarning, match="VERICTO-099"):
+        conn.execute("PRAGMA foreign_keys = OFF")
+    assert conn.execute("PRAGMA foreign_keys").fetchone() == (0,)
+
+
+def test_fail_open_and_fail_closed(fake: FakeVericto, evaluator: RuntimeApiEvaluator, tmp_path: Path) -> None:
+    from vericto import VerictoFailOpenWarning, VerictoUnavailable
+
+    fake.on(lambda sql: True, {"status": 502, "body": {}})
+    closed = vericto.sqlite.connect(str(tmp_path / "c.db"), guard=Vericto(evaluator))
+    with pytest.raises(VerictoUnavailable):
+        closed.execute("CREATE TABLE t (a INT)")
+    assert sqlite3.connect(str(tmp_path / "c.db")).execute("SELECT count(*) FROM sqlite_master").fetchone() == (0,)
+    opened = vericto.sqlite.connect(str(tmp_path / "o.db"), guard=Vericto(evaluator, fail_mode="open"))
+    with pytest.warns(VerictoFailOpenWarning):
+        opened.executescript("CREATE TABLE t (a INT); INSERT INTO t VALUES (1);")
+    assert sqlite3.Cursor.execute(opened.cursor(), "SELECT a FROM t").fetchall() == [(1,)]
+
+
+def test_split_script_edge_cases() -> None:
+    assert vericto.sqlite.split_script("") == []
+    assert vericto.sqlite.split_script("  ;;  -- nothing\n/* here */ ;") == []
+    assert vericto.sqlite.split_script("SELECT 1;;SELECT 2;") == ["SELECT 1;", "SELECT 2;"]
+    assert vericto.sqlite.split_script("SELECT 'a;b' -- c;d\n; SELECT 2") == ["SELECT 'a;b' -- c;d\n;", "SELECT 2"]
+
+
+def test_empty_script_evaluates_nothing(fake: FakeVericto, db: sqlite3.Connection) -> None:
+    before = len(fake.requests)
+    db.executescript("-- nothing to do\n")
+    assert len(fake.requests) == before
+
+
+def test_masked_script_keeps_statement_boundaries(fake: FakeVericto, db: sqlite3.Connection) -> None:
+    fake.on(lambda sql: sql.startswith("CREATE VIEW"), masked("CREATE VIEW v AS SELECT id, '***' AS email FROM users"))
+    # The last statement has no ';' and ends with a comment.
+    db.executescript("CREATE VIEW v AS SELECT id, email FROM users; CREATE TABLE audit (n INT) -- tail")
+    assert db.execute("SELECT email FROM v WHERE id = 2").fetchone() == ("***",)
+    assert db.execute("SELECT count(*) FROM audit").fetchone() == (0,)
+
+
+def test_connect_builds_the_guard_from_the_environment(
+    fake: FakeVericto, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tests.conftest import API_KEY, DATABASE_ID
+
+    monkeypatch.setenv("VERICTO_API_KEY", API_KEY)
+    monkeypatch.setenv("VERICTO_DATABASE_ID", DATABASE_ID)
+    monkeypatch.setenv("VERICTO_API_URL", fake.url)
+    conn = vericto.sqlite.connect(str(tmp_path / "env.db"))
+    conn.execute("SELECT 1")
+    assert fake.requests[-1]["dialect"] == "sqlite"
