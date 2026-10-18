@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Propose a rule or report a wrong verdict for a SQL statement
+    url: https://github.com/vericto/vericto-engine/issues/new/choose
+    about: Rules and SQL parsing live in vericto-engine; the SDK asks the Vericto API for each verdict.
+  - name: Report a problem with the Node.js SDK
+    url: https://github.com/vericto/vericto-node/issues/new/choose
+    about: "@vericto/sdk lives in vericto-node."
+  - name: Report a security vulnerability
+    url: https://github.com/vericto/vericto-python/security/policy
+    about: Report it privately (security@vericto.com) instead of in a public issue. See SECURITY.md.
