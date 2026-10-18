@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Vericto for Apache Airflow (2.9+ and 3.x), on the common-sql provider.
 
 Two ways in, sharing the same check:

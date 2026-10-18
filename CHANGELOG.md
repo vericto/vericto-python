@@ -6,6 +6,31 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-18
+
+**Now open source under the Apache License 2.0.** From this version on,
+`vericto` is licensed under the Apache License, Version 2.0 (SPDX `Apache-2.0`)
+instead of the Elastic License 2.0. **All previously released versions, 0.3.2
+and earlier, remain under the Elastic License 2.0.** No code change: the
+package behaves exactly as 0.3.2.
+
+### Changed
+
+- **License: Apache-2.0.** `LICENSE` is the Apache License 2.0 text from
+  apache.org, verbatim. New `NOTICE` (product name and copyright, Vericto
+  S.A.S.), which the license asks redistributors to keep, and
+  `TRADEMARKS.md`: the license grants no right to the Vericto name or logo.
+- **Package metadata (PEP 639):** `license = "Apache-2.0"` and
+  `license-files = ["LICENSE", "NOTICE"]`, so the wheel and the sdist carry
+  `License-Expression: Apache-2.0` and both files. The build needs
+  hatchling 1.27 or later, the first with full PEP 639 support. There is no
+  license classifier, as PEP 639 asks when a license expression is given.
+- Every Python file starts with `SPDX-FileCopyrightText` and
+  `SPDX-License-Identifier: Apache-2.0` lines (the REUSE convention).
+- README (License section, in English and Spanish) and CONTRIBUTING name the
+  new license. Contributions are accepted under the Apache License 2.0
+  (inbound = outbound, its section 5); no contributor agreement is needed.
+
 ## [0.3.2] - 2026-10-18
 
 A security release for `vericto-dbt`'s **sanitized mode** (a workspace whose

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Client-side literal sanitization for CI checks.
 
 When a Vericto workspace is in ``sanitized`` telemetry mode, literal values must

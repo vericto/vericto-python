@@ -1,8 +1,8 @@
 # Contributing to vericto (Python)
 
 Thanks for your interest in improving the Vericto SDK for Python. This guide
-covers the `vericto` package in this repository, which is source-available under
-the [Elastic License 2.0](LICENSE).
+covers the `vericto` package in this repository, which is open source under the
+[Apache License 2.0](LICENSE).
 
 ## Code of Conduct
 
@@ -146,6 +146,11 @@ or email [security@vericto.com](mailto:security@vericto.com).
 
 ## License
 
-vericto is source-available under the [Elastic License 2.0](LICENSE). For
+vericto is open source under the [Apache License 2.0](LICENSE) since 0.4.0
+(versions 0.3.2 and earlier remain under the Elastic License 2.0). Unless you
+state otherwise, a contribution you submit for inclusion is under the Apache
+License 2.0, as its section 5 says, without additional terms or conditions;
+no contributor agreement is needed. Add the `SPDX-FileCopyrightText` and
+`SPDX-License-Identifier: Apache-2.0` header to new source files. For
 questions about licensing a contribution, write to
 [legal@vericto.com](mailto:legal@vericto.com) before opening the pull request.

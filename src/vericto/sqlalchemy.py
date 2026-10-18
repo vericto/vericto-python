@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Vericto for SQLAlchemy (1.4 and 2.x), any dialect.
 
 ::

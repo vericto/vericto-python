@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Vericto: check every SQL statement with Vericto before it runs.
 
 The core is driver-agnostic:

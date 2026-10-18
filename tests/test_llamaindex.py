@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """vericto.llamaindex against the real llama-index-core (scripted LLM, no network)."""
 
 from __future__ import annotations

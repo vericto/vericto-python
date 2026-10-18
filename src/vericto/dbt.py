@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """``vericto-dbt check``: check a dbt project's compiled SQL with Vericto in CI.
 
 Run it after ``dbt compile`` (or ``dbt build --empty``)::

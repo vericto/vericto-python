@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Opt-in end-to-end test against a real Snowflake account. Skipped unless configured.
 
 Vericto is the local Runtime API stand-in (tests/conftest.py), so this proves the

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Exceptions raised by vericto.
 
 Every exception derives from :class:`VerictoError`, so ``except VerictoError``

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """The framework-free pieces shared by the LangChain and LlamaIndex integrations (vericto._agent).
 
 They need SQLAlchemy only, so they run in the core job; the integration jobs exercise them

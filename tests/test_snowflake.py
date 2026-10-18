@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """snowflake.connector wrappers against a fake connection: nothing connects to Snowflake.
 
 The connector itself is installed (its statement splitter is used as is); the

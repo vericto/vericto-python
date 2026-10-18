@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """The guard: turns verdicts into "run this SQL" or "raise"."""
 
 from __future__ import annotations

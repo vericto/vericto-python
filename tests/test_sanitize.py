@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """vericto.sanitize: vericto-cli's own test vectors, a property check, and the port's own edges."""
 
 from __future__ import annotations

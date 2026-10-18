@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Guard the standard library sqlite3 module with Vericto.
 
 The Vericto server evaluates the ``sqlite`` dialect. Against a server that does not
