@@ -50,7 +50,7 @@ jobs:
       fail-fast: false
       matrix:
         # Oldest supported, a middle one, and the newest.
-        python: ["3.9", "3.12", "3.14"]
+        python: ["3.10", "3.12", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -94,12 +94,6 @@ jobs:
             constraints: https://raw.githubusercontent.com/apache/airflow/constraints-3.3.2/constraints-3.13.txt
             tests: tests/test_airflow.py
             typecheck: src/vericto/airflow tests/test_airflow.py
-          - extra: airflow-2.11
-            python: "3.10"
-            requirements: ci/airflow-2/requirements.txt
-            constraints: https://raw.githubusercontent.com/apache/airflow/constraints-2.11.2/constraints-3.10.txt
-            tests: tests/test_airflow.py
-            typecheck: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

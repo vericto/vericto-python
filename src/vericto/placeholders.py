@@ -96,7 +96,7 @@ def from_evaluation_text(rewritten: str, mapping: PlaceholderMap) -> str:
     used = 0
     i = 0
     n = len(rewritten)
-    by_number = {num: marker for marker, num in zip(mapping.markers, mapping.numbers)}
+    by_number = {num: marker for marker, num in zip(mapping.markers, mapping.numbers, strict=False)}
     while i < n:
         span = _quoted_span(rewritten, i, mapping.dialect)
         if span is not None:

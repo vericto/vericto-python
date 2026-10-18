@@ -346,7 +346,7 @@ def evaluate(
         texts = [sanitize(i.sql, dialect) if sanitized else i.sql for i in batch]
         if use_files:
             body = client.check_files(
-                [CiFile(i.label, t) for i, t in zip(batch, texts)],
+                [CiFile(i.label, t) for i, t in zip(batch, texts, strict=True)],
                 dialect,
                 database_id=database_id,
                 file_name=file_name,
