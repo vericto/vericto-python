@@ -1,7 +1,0 @@
-# Airflow 2 test environment. Installed with the official constraints file:
-#   -c https://raw.githubusercontent.com/apache/airflow/constraints-2.11.2/constraints-3.10.txt
-apache-airflow==2.11.2
-apache-airflow-providers-common-sql==1.32.0
-apache-airflow-providers-sqlite==4.3.0
-pytest==8.2.1
-pytest-httpserver==1.1.3

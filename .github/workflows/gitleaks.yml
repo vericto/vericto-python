@@ -14,7 +14,7 @@ permissions:
 jobs:
   gitleaks:
     name: gitleaks
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","x64","vericto-spot"]') }}
+    runs-on: ${{ github.event.repository.private && fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","x64","vericto-spot"]') || fromJSON(vars.CI_RUNS_ON_PUBLIC || '"ubuntu-latest"') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

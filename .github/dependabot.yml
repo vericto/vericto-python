@@ -21,3 +21,31 @@ updates:
     groups:
       python:
         patterns: ["*"]
+
+  # The framework test environments in ci/ (installed by the "extras" CI job).
+  # Airflow and its providers are pinned by the official constraints files the
+  # job installs with, so a bump here alone conflicts with them; they move with
+  # the constraints URL in ci.yml. These rules also apply to security updates.
+  - package-ecosystem: pip
+    directory: /ci
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: chore(deps)
+    ignore:
+      - dependency-name: "apache-airflow*"
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      ci:
+        patterns: ["*"]
+
+  # Airflow 2: every pin comes from constraints-2.11.2 (see the file's header).
+  - package-ecosystem: pip
+    directory: /ci/airflow-2
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
