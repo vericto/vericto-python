@@ -9,7 +9,7 @@ description = "Official Vericto SDK for Python: check SQL before it runs. Wrappe
 readme = "README.md"
 license = "Elastic-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [{ name = "Vericto", email = "security@vericto.com" }]
 keywords = ["sql", "firewall", "security", "snowflake", "sqlite", "sqlalchemy", "ai-agents", "langchain", "llamaindex", "dbt", "airflow", "vericto"]
 classifiers = [
@@ -18,7 +18,6 @@ classifiers = [
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -35,16 +34,17 @@ dependencies = ["urllib3>=1.26.18,<3"]
 [project.optional-dependencies]
 snowflake = ["snowflake-connector-python>=3.0"]
 sqlalchemy = ["sqlalchemy>=1.4"]
-# Integrations (Python 3.10+, as the frameworks themselves). Tested versions: README.
+# Integrations. Tested versions: README.
 langchain = [
-  "langchain-community>=0.3,<0.5; python_version >= '3.10'",
-  "langchain-core>=0.3,<2; python_version >= '3.10'",
+  "langchain-community>=0.3,<0.5",
+  "langchain-core>=0.3,<2",
   "sqlalchemy>=1.4",
 ]
-llamaindex = ["llama-index-core>=0.12,<0.15; python_version >= '3.10'", "sqlalchemy>=1.4"]
+llamaindex = ["llama-index-core>=0.12,<0.15", "sqlalchemy>=1.4"]
+# Airflow 3 only: Airflow 2 is end-of-life upstream (README, "Airflow").
 airflow = [
-  "apache-airflow>=2.9; python_version >= '3.10' and python_version < '3.15'",
-  "apache-airflow-providers-common-sql>=1.14; python_version >= '3.10' and python_version < '3.15'",
+  "apache-airflow>=3.0; python_version < '3.15'",
+  "apache-airflow-providers-common-sql>=1.14; python_version < '3.15'",
 ]
 # vericto-dbt reads dbt's artifacts and needs no dbt package: the extra is empty.
 dbt = []
@@ -85,13 +85,13 @@ filterwarnings = ["error::vericto.errors.VerictoFailOpenWarning"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py310"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
 ignore = [
-  "UP006", "UP007", "UP035", "UP045",  # keep typing.Optional/List: Python 3.9 is supported
+  "UP006", "UP007", "UP035", "UP045",  # keep typing.Optional/List: the code base's style
   "S311",                              # random is for retry jitter, not security
 ]
 

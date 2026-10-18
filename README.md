@@ -18,7 +18,7 @@ It is a thin client of the **Vericto Runtime API** (`POST /api/v1/proxy/query`).
 Evaluation happens in your Vericto workspace; nothing is evaluated locally in this
 release (see [Evaluators](#evaluators)).
 
-- Python 3.9+, typed (`py.typed`), one dependency (`urllib3`).
+- Python 3.10+, typed (`py.typed`), one dependency (`urllib3`).
 - Drivers are optional extras; importing `vericto` never imports a driver.
 
 ## Install
@@ -27,9 +27,9 @@ release (see [Evaluators](#evaluators)).
 pip install vericto                  # core + sqlite3 + generic DB-API wrapper
 pip install "vericto[snowflake]"     # + snowflake-connector-python
 pip install "vericto[sqlalchemy]"    # + SQLAlchemy
-pip install "vericto[langchain]"     # LangChain SQL agents and chains (Python 3.10+)
-pip install "vericto[llamaindex]"    # LlamaIndex text-to-SQL (Python 3.10+)
-pip install "vericto[airflow]"       # Airflow operator and cluster policy (Python 3.10+)
+pip install "vericto[langchain]"     # LangChain SQL agents and chains
+pip install "vericto[llamaindex]"    # LlamaIndex text-to-SQL
+pip install "vericto[airflow]"       # Airflow 3 operator and cluster policy
 pip install "vericto[dbt]"           # vericto-dbt: CI checks for dbt projects (no extra dependency)
 ```
 
@@ -243,7 +243,7 @@ Each is a thin layer over the guard above; the core API is unchanged.
 | [LangChain](#langchain) | `vericto[langchain]` | `VerictoSQLDatabase` for `QuerySQLDatabaseTool`, `SQLDatabaseToolkit`, `create_sql_agent`, SQL chains; `VerictoCheckSQLTool` | Runtime API | langchain-community 0.4.2, langchain-core 1.6.10, langchain-classic 1.0.8 |
 | [LlamaIndex](#llamaindex) | `vericto[llamaindex]` | `VerictoSQLDatabase` for `NLSQLTableQueryEngine`, `SQLTableRetrieverQueryEngine`, `NLSQLRetriever` | Runtime API | llama-index-core 0.14.25 |
 | [dbt](#dbt) | `vericto[dbt]` | `vericto-dbt check`: compiled models, snapshots and hooks, table / JSON / SARIF | CI-check API | dbt manifest v12 fixtures (no dbt runtime) |
-| [Airflow](#airflow) | `vericto[airflow]` | `VerictoSQLExecuteQueryOperator`; cluster policy `guard_sql_tasks` | Runtime API | Airflow 3.3.2 (common-sql 2.1.1) and 2.11.2 (common-sql 1.32.0), official constraints |
+| [Airflow](#airflow) | `vericto[airflow]` | `VerictoSQLExecuteQueryOperator`; cluster policy `guard_sql_tasks` | Runtime API | Airflow 3.3.2 (common-sql 2.1.1), official constraints |
 | LangChain.js | `@vericto/sdk` (Node) | `@vericto/sdk/langchain` | Runtime API | see vericto-node |
 
 Runtime paths (agents, Airflow tasks) use the **Runtime API** with a
@@ -342,6 +342,11 @@ binary, and a Python script of the same name would shadow it on `PATH`.
 
 ### Airflow
 
+Airflow 3 (`vericto[airflow]` requires `apache-airflow>=3.0`). Airflow 2 is
+[end-of-life upstream](https://airflow.apache.org/docs/apache-airflow/stable/installation/supported-versions.html)
+since 2026-04-22 and is no longer tested. vericto 0.2.x remains installable from
+PyPI for Python 3.9 and Airflow 2 users (`pip install "vericto[airflow]<0.3"`).
+
 ```python
 from vericto.airflow import VerictoSQLExecuteQueryOperator
 
@@ -383,7 +388,7 @@ def task_policy(task):
 ## Development
 
 ```bash
-uv sync                      # Python 3.9+; uv.lock pins the dev tools
+uv sync                      # Python 3.10+; uv.lock pins the dev tools
 uv run ruff check . && uv run ruff format --check .
 uv run mypy
 uv run pytest
@@ -431,7 +436,7 @@ variables are set and never run in CI.
 | `VERICTO_API_URL` | `https://api-staging.vericto.com` (or another server that lists `sqlite`) |
 | `VERICTO_DATABASE_ID` | the id of a database of dialect `sqlite` in that workspace |
 
-On the host (Python 3.9+, the SQLite file goes to pytest's temporary directory):
+On the host (Python 3.10+, the SQLite file goes to pytest's temporary directory):
 
 ```bash
 export VERICTO_LIVE_SQLITE=1 VERICTO_API_URL=https://api-staging.vericto.com
@@ -446,7 +451,7 @@ read-only and copied; the SQLite file never leaves the container):
 docker run --rm -v "$PWD":/src:ro \
   -e VERICTO_LIVE_SQLITE=1 -e VERICTO_API_KEY -e VERICTO_API_URL -e VERICTO_DATABASE_ID \
   python:3.13-slim sh -c 'cp -r /src /work && cd /work && rm -rf .venv \
-    && pip install --quiet --no-cache-dir . pytest==8.4.2 pytest-httpserver==1.1.3 \
+    && pip install --quiet --no-cache-dir . pytest==9.1.1 pytest-httpserver==1.1.3 \
     && python -m pytest tests/live/test_sqlite_live.py -v -p no:cacheprovider'
 ```
 
@@ -456,6 +461,12 @@ A skipped run (`1 skipped` per test) means a variable is missing.
 
 See [SECURITY.md](SECURITY.md). Report vulnerabilities to security@vericto.com,
 not in public issues.
+
+`vericto` accepts `urllib3>=1.26.18,<3` so it fits the environments it is
+installed into, but use **urllib3 2.8.0 or later**: older releases are affected by
+GHSA-pq67-6m6q-mj2v, GHSA-gm62-xv2j-4w53, GHSA-2xpw-w6gg-jr37,
+GHSA-38jv-5279-wg99, GHSA-qccp-gfcp-xxvc, GHSA-8988-9cw3-xx77 and
+GHSA-vxq7-64xx-v4gw. The repository's dev lock (`uv.lock`) pins 2.8.0.
 
 ## License
 
@@ -488,6 +499,13 @@ la regla y la corrección sugerida en vez de una excepción), `vericto-dbt check
 (valida el SQL compilado de un proyecto dbt en CI con la API de CI-check, con
 salida JSON/SARIF) y `vericto.airflow` (operador y política de clúster). Ver
 [Integrations](#integrations).
+
+Desde 0.3.0, `vericto` requiere Python 3.10+ y `vericto[airflow]` requiere
+Airflow 3: Airflow 2 llegó al fin de su ciclo de vida
+([versiones soportadas](https://airflow.apache.org/docs/apache-airflow/stable/installation/supported-versions.html))
+y ya no se prueba. Quienes usen Python 3.9 o Airflow 2 pueden seguir instalando
+0.2.x (`pip install "vericto<0.3"`). Se recomienda urllib3 2.8.0 o posterior (ver
+[Security](#security)).
 
 SQLite: el servidor de Vericto evalúa el dialecto `sqlite` (vericto-engine
 4.1.0+). `vericto.sqlite.connect()` igual consulta `GET /api/v1/meta/config` y,

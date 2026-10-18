@@ -6,6 +6,49 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-18
+
+A support-policy release: Python 3.9 and Airflow 2 are dropped. The API is
+unchanged; 0.2.x code runs as is on Python 3.10+ and Airflow 3.
+
+### Changed
+
+- **BREAKING**: `requires-python` is now `>=3.10`. Python 3.9 reached its end of
+  life in October 2025, and no patched release of the affected dependencies
+  (urllib3, cryptography, requests, filelock, pytest,
+  snowflake-connector-python) supports it.
+- **BREAKING**: the `airflow` extra requires `apache-airflow>=3.0` (was `>=2.9`).
+  Airflow 2.x reached its end of life upstream on 2026-04-22
+  ([supported versions](https://airflow.apache.org/docs/apache-airflow/stable/installation/supported-versions.html):
+  "EOL versions will not get any fixes or support"), and its open advisories are
+  fixed only in 3.x. CI no longer tests Airflow 2.11 (`ci/airflow-2/` and its
+  Dependabot entry are removed); Airflow 3.3.2 is still tested.
+- vericto 0.2.x stays available on PyPI for Python 3.9 and Airflow 2 users
+  (`pip install "vericto<0.3"`).
+- The core test matrix is Python 3.10, 3.12 and 3.14.
+
+### Security
+
+- The dev lock (`uv.lock`) is regenerated without the Python 3.9 resolution, so
+  it pins only patched versions: urllib3 2.8.0 (was 1.26.20 on 3.9),
+  cryptography 50.0.2 (47.0.0), snowflake-connector-python 4.8.0 (4.5.0),
+  requests 2.34.2 (2.32.5), filelock 3.32.7 (3.19.1) and pytest 9.1.1 (8.4.2).
+  This closes GHSA-pq67-6m6q-mj2v, GHSA-gm62-xv2j-4w53, GHSA-2xpw-w6gg-jr37,
+  GHSA-38jv-5279-wg99, GHSA-qccp-gfcp-xxvc, GHSA-8988-9cw3-xx77 and
+  GHSA-vxq7-64xx-v4gw (urllib3), GHSA-537c-gmf6-5ccf, GHSA-g6cj-pr64-35w5,
+  GHSA-jwv3-5hgf-82ww and GHSA-m2h6-j472-rp4c (cryptography),
+  GHSA-5cc2-282f-jjq2 and GHSA-qqj6-54q6-cxv6 (snowflake-connector-python),
+  GHSA-gc5v-m9x4-r6x2 (requests), GHSA-w853-jp5j-5j7f and GHSA-qmgc-5h2g-mvrw
+  (filelock) and GHSA-6w46-j5rx-g56g (pytest).
+- Removing `ci/airflow-2/requirements.txt` closes its 27 apache-airflow
+  advisories and its pytest advisory (GHSA-6w46-j5rx-g56g), all fixed only in
+  Airflow 3.x / pytest 9.
+- The README recommends urllib3 2.8.0 or later; the runtime range
+  (`urllib3>=1.26.18,<3`) is unchanged.
+- Remaining: nltk 3.10.3 (GHSA-8mgp-746c-j5xp, no patched release), locked only
+  as a transitive dependency of llama-index-core (the optional `llamaindex`
+  extra); vericto does not import it.
+
 ## [0.2.0] - 2026-10-16
 
 Integrations for LangChain, LlamaIndex, dbt and Airflow, each a thin layer over
@@ -89,5 +132,6 @@ the Vericto Runtime API (`POST /api/v1/proxy/query`).
 - The Vericto engine does not evaluate the `sqlite` dialect yet: the SQLite
   wrappers raise `VerictoUnsupportedDialect` until the server lists it.
 
+[0.3.0]: https://github.com/vericto/vericto-python/releases/tag/v0.3.0
 [0.2.0]: https://github.com/vericto/vericto-python/releases/tag/v0.2.0
 [0.1.0]: https://github.com/vericto/vericto-python/releases/tag/v0.1.0
