@@ -17,7 +17,6 @@ from tests.conftest import API_KEY
 from vericto import dbt
 from vericto.__main__ import main as module_main
 from vericto.ci_api import CiCheckClient, provenance_from_env
-from vericto.sanitize import sanitize
 
 FIXTURE = Path(__file__).parent / "fixtures" / "dbt" / "jaffle"
 
@@ -342,7 +341,8 @@ def test_sanitized_workspace_never_sends_literals(project: Path, client: CiCheck
         ),
     )
     assert run(project, client, "--select", "customers", "--no-hooks") == 0
-    assert ci.statements() == ["select customer_id from ANALYTICS.DBT.stg_customers where email = $1 and id = $2"]
+    # Snowflake placeholders are "?", as in vericto-cli 1.8.0 ($1 is a stage column there).
+    assert ci.statements() == ["select customer_id from ANALYTICS.DBT.stg_customers where email = ? and id = ?"]
 
 
 def test_config_unreadable_fails_unless_allowed(project: Path, client: CiCheckClient, ci: FakeCi) -> None:
@@ -476,31 +476,21 @@ def test_client_repr_hides_the_key(ci: FakeCi) -> None:
     assert API_KEY not in repr(CiCheckClient(API_KEY, api_url=ci.url))
 
 
-# -- sanitizer (vericto-cli's sanitize.rs cases) ------------------------------------
+# The sanitizer itself, with vericto-cli's test vectors, is covered in tests/test_sanitize.py.
 
 
-@pytest.mark.parametrize(
-    ("sql", "dialect", "expected"),
-    [
-        ("SELECT * FROM users WHERE email = 'a@b.com'", "postgres", "SELECT * FROM users WHERE email = $1"),
-        ("SELECT * FROM users WHERE email = 'a@b.com'", "mysql", "SELECT * FROM users WHERE email = ?"),
-        ("WHERE a = 'x' AND b = 'y' AND c = 5", "postgres", "WHERE a = $1 AND b = $2 AND c = $3"),
-        ("WHERE name = 'O''Brien'", "postgres", "WHERE name = $1"),
-        ("WHERE id = 42 AND col2 = 7", "postgres", "WHERE id = $1 AND col2 = $2"),
-        ("DO $$ BEGIN PERFORM 'secret'; END $$", "postgres", "DO $$ BEGIN PERFORM 'secret'; END $$"),
-        ('SELECT "user\'s col" FROM t', "postgres", 'SELECT "user\'s col" FROM t'),
-        (r"WHERE note = 'it\'s secret-token' AND id = 1", "mysql", "WHERE note = ? AND id = ?"),
-        (r"WHERE p = 'C:\\' AND q = 'x'", "mysql", "WHERE p = ? AND q = ?"),
-        (r"WHERE note = E'it\'s secret-token' AND id = 1", "postgres", "WHERE note = $1 AND id = $2"),
-        (r"WHERE note = e'a\\' AND b = 'y'", "postgres", "WHERE note = $1 AND b = $2"),
-        (r"WHERE p = 'C:\' AND q = 'x'", "postgres", "WHERE p = $1 AND q = $2"),
-        ("SELECT name FROM t WHERE type='a'", "postgres", "SELECT name FROM t WHERE type=$1"),
-        ("SELECT 1 -- note: keep 'this'\nFROM t", "postgres", "SELECT $1 -- note: keep 'this'\nFROM t"),
-        ("SELECT /* 'x' */ a FROM `t1`", "mysql", "SELECT /* 'x' */ a FROM `t1`"),
-    ],
-)
-def test_sanitize_matches_vericto_cli(sql: str, dialect: str, expected: str) -> None:
-    assert sanitize(sql, dialect) == expected
+def test_sanitized_postgres_workspace_keeps_bind_parameters(project: Path, client: CiCheckClient, ci: FakeCi) -> None:
+    ci.config["telemetry_query_mode"] = "sanitized"
+    edit_manifest(
+        project,
+        lambda m: m["nodes"]["model.jaffle.customers"].update(
+            compiled_code="select customer_id from stg_customers where id = $1 and email = 'ana@example.com'"
+        ),
+    )
+    assert run(project, client, "--select", "customers", "--no-hooks", "--dialect", "postgres") == 0
+    # The existing $1 stays $1 (it became "$$1", a dollar quote); the literal gets the first number,
+    # as vericto-cli numbers it.
+    assert ci.statements() == ["select customer_id from stg_customers where id = $1 and email = $1"]
 
 
 # -- manifest and selection edge cases -------------------------------------------------

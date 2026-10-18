@@ -1,0 +1,24 @@
+{
+  "source": "vericto/vericto-cli src/sanitize.rs, mod tests, at commit 5ed6ddd (release 1.8.0). Every assert_eq!(sanitize(sql, dialect), expected) there, copied verbatim. Update this file together with any change to vericto-cli's sanitizer.",
+  "vectors": [
+    {"test": "strips_string_literals_postgres_numbered", "dialect": "postgres", "sql": "SELECT * FROM users WHERE email = 'a@b.com'", "expected": "SELECT * FROM users WHERE email = $1"},
+    {"test": "sqlite_uses_question_mark_and_keeps_its_identifiers", "dialect": "sqlite", "sql": "SELECT [it's], `a` FROM t WHERE x = $id AND y = 'O''Brien' AND z = 7", "expected": "SELECT [it's], `a` FROM t WHERE x = $id AND y = ? AND z = ?"},
+    {"test": "sqlite_uses_question_mark_and_keeps_its_identifiers", "dialect": "sqlite", "sql": "WHERE p = 'C:\\' AND q = 'x'", "expected": "WHERE p = ? AND q = ?"},
+    {"test": "existing_bind_parameters_are_kept", "dialect": "postgres", "sql": "SELECT a FROM t WHERE id = $1 AND name = $2", "expected": "SELECT a FROM t WHERE id = $1 AND name = $2"},
+    {"test": "existing_bind_parameters_are_kept", "dialect": "sqlite", "sql": "SELECT a FROM t WHERE id = ?1 AND b = ?2 AND n = 5", "expected": "SELECT a FROM t WHERE id = ?1 AND b = ?2 AND n = ?"},
+    {"test": "snowflake_uses_question_mark", "dialect": "snowflake", "sql": "SELECT $1 FROM @stage WHERE a = 'x'", "expected": "SELECT $1 FROM @stage WHERE a = ?"},
+    {"test": "mysql_uses_question_mark", "dialect": "mysql", "sql": "SELECT * FROM users WHERE email = 'a@b.com'", "expected": "SELECT * FROM users WHERE email = ?"},
+    {"test": "numbered_placeholders_increment", "dialect": "postgres", "sql": "WHERE a = 'x' AND b = 'y' AND c = 5", "expected": "WHERE a = $1 AND b = $2 AND c = $3"},
+    {"test": "handles_escaped_quotes", "dialect": "postgres", "sql": "WHERE name = 'O''Brien'", "expected": "WHERE name = $1"},
+    {"test": "strips_numbers_but_not_identifiers", "dialect": "postgres", "sql": "WHERE id = 42 AND col2 = 7", "expected": "WHERE id = $1 AND col2 = $2"},
+    {"test": "leaves_dollar_quoted_blocks_intact", "dialect": "postgres", "sql": "DO $$ BEGIN PERFORM 'secret'; END $$", "expected": "DO $$ BEGIN PERFORM 'secret'; END $$"},
+    {"test": "leaves_quoted_identifiers_intact", "dialect": "postgres", "sql": "SELECT \"user's col\" FROM t", "expected": "SELECT \"user's col\" FROM t"},
+    {"test": "mysql_backslash_escaped_quote_does_not_leak", "dialect": "mysql", "sql": "WHERE note = 'it\\'s secret-token' AND id = 1", "expected": "WHERE note = ? AND id = ?"},
+    {"test": "mysql_escaped_backslash_before_closing_quote", "dialect": "mysql", "sql": "WHERE p = 'C:\\\\' AND q = 'x'", "expected": "WHERE p = ? AND q = ?"},
+    {"test": "postgres_e_string_backslash_escape_does_not_leak", "dialect": "postgres", "sql": "WHERE note = E'it\\'s secret-token' AND id = 1", "expected": "WHERE note = $1 AND id = $2"},
+    {"test": "postgres_e_string_backslash_escape_does_not_leak", "dialect": "postgres", "sql": "WHERE note = e'a\\\\' AND b = 'y'", "expected": "WHERE note = $1 AND b = $2"},
+    {"test": "postgres_standard_string_keeps_backslash_literal", "dialect": "postgres", "sql": "WHERE p = 'C:\\' AND q = 'x'", "expected": "WHERE p = $1 AND q = $2"},
+    {"test": "identifier_ending_in_e_is_not_an_e_string", "dialect": "postgres", "sql": "SELECT name FROM t WHERE type='a'", "expected": "SELECT name FROM t WHERE type=$1"},
+    {"test": "preserves_comments", "dialect": "postgres", "sql": "SELECT 1 -- note: keep 'this'\nFROM t", "expected": "SELECT $1 -- note: keep 'this'\nFROM t"}
+  ]
+}
