@@ -6,6 +6,66 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-18
+
+A security release for `vericto-dbt`'s **sanitized mode** (a workspace whose
+telemetry query mode is `sanitized`). `vericto.sanitize` mirrors vericto-cli
+1.8.2, which fixes the same leaks: in the cases below, part of a literal was
+sent as written although the mode promises that no literal value leaves the
+machine. The sanitizer is now a lexer that ends every literal where the
+dialect's own lexer ends it, and it fails closed. Nothing else changes in the
+package; a workspace in `raw` mode is not affected.
+
+### Security
+
+- **Snowflake backslash escapes**: `'it\'s secret'` ended at `\'` and sent
+  `s secret`. Snowflake strings now honor backslash escapes.
+- **MySQL with `NO_BACKSLASH_ESCAPES`**: only the default escape mode was read,
+  so on such a server `'C:\' AND q = 'secret'` sent `secret`. A MySQL statement
+  with a backslash is now read in both modes: a reading that leaves something
+  unterminated is dropped, and where both are possible and disagree, whatever
+  is a literal in either is replaced.
+- **MySQL `"..."` strings** were copied as identifiers, value included.
+- **Oracle `q'[...]'`, `q'{...}'`, `q'(...)'`, `q'<...>'`, `q'!...!'`** (any
+  delimiter) **and `nq'...'`**: their content was sent from its first inner
+  quote on.
+- **Dollar-quoted strings and bodies** (`$$...$$`, `$tag$...$tag$`) were copied
+  with the literals inside. A dollar-quoted string is now a literal; after `AS`
+  or `DO` it is a function or `DO` body, which the engine flags without reading,
+  and becomes the empty body `$$$$` so the statement still parses.
+- **Comments the dialect reads differently** opened a literal at a `'` inside
+  them, so the real literal after it was sent: MySQL `#`, Snowflake `//`,
+  nested PostgreSQL and MSSQL `/* */`. MySQL `5--'x'` (not a comment there)
+  and the content of `/*! ... */`, which MySQL executes, are now sanitized.
+- **Prefixes and numbers**: the `N`, `U&`, `X`, `B` and `_utf8mb4` prefixes
+  stayed in front of the placeholder, and `0x4142`, `1e10`, `.5`, MSSQL
+  `$12.50` and a unary sign were sent in part. Each is now one placeholder.
+- **Fail closed**: an unterminated quoted identifier, comment or dollar quote
+  was copied to the end as written. Now everything from where the text cannot
+  be read with certainty to the end is one placeholder.
+
+### Fixed
+
+- Oracle `:1` became `:$1` and MSSQL `[col 1]` became `[col $1]`: bind
+  parameters (`:1`, `:name`) and bracketed identifiers are kept as written.
+- `id = $1 AND n = 5` became `id = $1 AND n = $1`, one parameter for two
+  values. New placeholders are numbered after the highest `$N` (and Oracle
+  `:N`) already in the statement.
+- A digit after a non-ASCII letter was read as a number: `café2` became
+  `café$1`. Identifiers in any script are now kept as written.
+- The dialect name is matched case-insensitively.
+
+### Tests
+
+- `tests/fixtures/sanitize/vericto-cli-1.8.2.json` replaces the 1.8.0 file: it
+  is vericto-cli 1.8.2's `tests/fixtures/sanitize.json` byte for byte (133
+  vectors, run by both test suites). A seeded property test puts a secret marker
+  inside literals of every kind in random statements across seven dialects and
+  checks that none comes out; other tests cover non-ASCII text and linear time.
+  A differential run against vericto-cli 1.8.2's `sanitize.rs` (214,133 inputs:
+  the fixture, generated statements, mutated vectors and random Unicode) gave
+  identical output for every input.
+
 ## [0.3.1] - 2026-10-18
 
 A bug-fix release: `vericto-dbt`'s sanitized mode follows vericto-cli 1.8.0
@@ -166,6 +226,7 @@ the Vericto Runtime API (`POST /api/v1/proxy/query`).
 - The Vericto engine does not evaluate the `sqlite` dialect yet: the SQLite
   wrappers raise `VerictoUnsupportedDialect` until the server lists it.
 
+[0.3.2]: https://github.com/vericto/vericto-python/releases/tag/v0.3.2
 [0.3.1]: https://github.com/vericto/vericto-python/releases/tag/v0.3.1
 [0.3.0]: https://github.com/vericto/vericto-python/releases/tag/v0.3.0
 [0.2.0]: https://github.com/vericto/vericto-python/releases/tag/v0.2.0

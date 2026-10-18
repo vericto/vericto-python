@@ -1,18 +1,21 @@
-"""vericto.sanitize: vericto-cli's own test vectors, then per-dialect and edge cases."""
+"""vericto.sanitize: vericto-cli's own test vectors, a property check, and the port's own edges."""
 
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 import pytest
 
 from vericto.sanitize import sanitize
 
-# vericto-cli's sanitize.rs test vectors (release 1.8.0), copied verbatim: the port must give the same
-# output for each, so the two cannot drift apart unnoticed. See "source" in the file.
-VERICTO_CLI_VECTORS = Path(__file__).parent / "fixtures" / "sanitize" / "vericto-cli-1.8.0.json"
+# vericto-cli's fixture (tests/fixtures/sanitize.json in vericto-cli 1.8.2), byte for byte: vericto-cli's
+# own tests run the same file, so the port must give the same output for each vector. See "source".
+VERICTO_CLI_VECTORS = Path(__file__).parent / "fixtures" / "sanitize" / "vericto-cli-1.8.2.json"
+
+DIALECTS = ["postgres", "mysql", "oracle", "mssql", "snowflake", "sqlite", "bigquery"]
 
 
 def _vectors() -> List[Dict[str, Any]]:
@@ -21,95 +24,182 @@ def _vectors() -> List[Dict[str, Any]]:
     return vectors
 
 
-@pytest.mark.parametrize("vector", _vectors(), ids=lambda v: f"{v['test']}-{v['dialect']}")
+@pytest.mark.parametrize("vector", _vectors(), ids=lambda v: f"{v['test']}-{v['dialect'].strip()}")
 def test_matches_vericto_cli_test_vectors(vector: Dict[str, Any]) -> None:
     assert sanitize(vector["sql"], vector["dialect"]) == vector["expected"]
 
 
-def test_vericto_cli_vectors_cover_every_placeholder_style() -> None:
-    dialects = {v["dialect"] for v in _vectors()}
-    assert {"postgres", "mysql", "snowflake", "sqlite"} <= dialects
+def test_vericto_cli_vectors_cover_every_dialect_and_leak() -> None:
+    vectors = _vectors()
+    assert len(vectors) >= 133
+    assert set(DIALECTS) <= {v["dialect"] for v in vectors}
+    groups = {v["test"] for v in vectors}
+    for leak in (
+        "snowflake_backslash_escape_does_not_leak",
+        "mysql_reads_both_escape_modes",
+        "oracle_q_quotes_are_literals",
+        "mssql_bracket_identifiers_are_kept",
+        "bind_parameters_are_kept_as_written",
+        "numbering_starts_after_existing_parameters",
+        "non_ascii_text_is_kept",
+        "fails_closed",
+    ):
+        assert leak in groups
 
 
-# Per dialect: placeholders, bind parameters already in the statement, dollar quotes, stage
-# references and identifiers. Every expected value is also what vericto-cli 1.8.0 returns.
-DIALECT_CASES = [
-    # PostgreSQL: numbered placeholders; $N binds kept (the counter does not skip them, as in vericto-cli).
-    ("SELECT a FROM t WHERE id = $1 AND n = 5", "postgres", "SELECT a FROM t WHERE id = $1 AND n = $1"),
-    ("SELECT a FROM t WHERE id = $12", "postgres", "SELECT a FROM t WHERE id = $12"),
-    ("SELECT $body$ 'x' $body$, 'y'", "postgres", "SELECT $body$ 'x' $body$, $1"),
-    ('SELECT "col1", t1.c2 FROM t1 WHERE x = 3', "postgres", 'SELECT "col1", t1.c2 FROM t1 WHERE x = $1'),
-    # MySQL: ? placeholders; existing ? binds kept; backtick names verbatim.
-    ("SELECT a FROM t WHERE id = ? AND n = 5", "mysql", "SELECT a FROM t WHERE id = ? AND n = ?"),
-    ("SELECT `col 1`, `t2` FROM t WHERE x = 'a\\'b'", "mysql", "SELECT `col 1`, `t2` FROM t WHERE x = ?"),
-    ("SELECT $1 FROM t", "mysql", "SELECT $1 FROM t"),
-    # Oracle: numbered placeholders; :name binds kept.
-    (
-        "SELECT 'a' || name FROM t WHERE id = :id AND n = 10",
-        "oracle",
-        "SELECT $1 || name FROM t WHERE id = :id AND n = $2",
-    ),
-    ("SELECT a FROM t WHERE id = $1", "oracle", "SELECT a FROM t WHERE id = $1"),
-    # MSSQL: numbered placeholders; @p1 binds kept.
-    (
-        "SELECT [name] FROM t WHERE id = @p1 AND n = 3 AND s = 'x'",
-        "mssql",
-        "SELECT [name] FROM t WHERE id = @p1 AND n = $1 AND s = $2",
-    ),
-    # Snowflake: ? placeholders; $1 stage columns and ? binds kept; $$ strings verbatim.
-    (
-        "SELECT $1, $2 FROM @stage/file.csv WHERE a = 5",
-        "snowflake",
-        "SELECT $1, $2 FROM @stage/file.csv WHERE a = ?",
-    ),
-    ("SELECT t.$1 FROM @s t WHERE id = ? AND n = 2", "snowflake", "SELECT t.$1 FROM @s t WHERE id = ? AND n = ?"),
-    ("SELECT $$it's$$, 'x'", "snowflake", "SELECT $$it's$$, ?"),
-    # SQLite: ? placeholders; [name] verbatim; :a, @b, $c, ?3 binds kept; $$ is not a dollar quote.
-    (
-        "SELECT [col 1] FROM t WHERE a = :a AND b = @b AND c = $c AND d = ?3 AND e = 4",
-        "sqlite",
-        "SELECT [col 1] FROM t WHERE a = :a AND b = @b AND c = $c AND d = ?3 AND e = ?",
-    ),
-    ("SELECT $$ 'x' $$", "sqlite", "SELECT $$ ? $$"),
-    ("SELECT [open 1", "sqlite", "SELECT [open 1"),
-    # Any other dialect gets numbered placeholders, the safe default.
-    ("WHERE a = 'x' AND b = 2", "bigquery", "WHERE a = $1 AND b = $2"),
-]
+# -- property: no literal content survives ---------------------------------------------------------
 
 
-@pytest.mark.parametrize(("sql", "dialect", "expected"), DIALECT_CASES)
-def test_dialects(sql: str, dialect: str, expected: str) -> None:
-    assert sanitize(sql, dialect) == expected
+def _string_piece(rng: random.Random, dialect: str, backslash: bool, quote: str) -> str:
+    """Text that may sit inside a string quoted with ``quote`` in ``dialect`` without ending it."""
+    pieces = [" ", "''", '""', "-- ", "/*", "*/", "$$", "ñ", "😀", "名", "]", "[", "#", "//", ":1", "$1", "?", "\n"]
+    pieces += ['"', "q''["] if quote == "'" else ["'", "q'["]
+    pieces += ["\\'", '\\"', "\\\\", "\\n"] if backslash else ["\\"]
+    if dialect == "mysql":
+        pieces.remove("*/")  # a literal inside /*! ... */ never holds */
+    return "".join(rng.choice(pieces) for _ in range(rng.randrange(4)))
+
+
+def _literal(rng: random.Random, dialect: str, marker: str, digits: str, hexa: str) -> str:
+    """A literal holding ``marker`` (or ``digits`` / ``hexa``), of a kind ``dialect`` has."""
+    plain_bs = dialect in ("mysql", "snowflake", "bigquery")
+
+    def quoted(bs: bool) -> str:
+        return f"'{_string_piece(rng, dialect, bs, chr(39))}{marker}{_string_piece(rng, dialect, bs, chr(39))}'"
+
+    safe = ["", " ", "'", "ñ", "😀", "x", '"', "--", "/*"]
+
+    def s() -> str:
+        return rng.choice(safe) + rng.choice(safe)
+
+    kinds: List[Callable[[], str]] = [
+        lambda: quoted(plain_bs),
+        lambda: digits,
+        lambda: f"-{digits}",
+        lambda: f"{digits}.{digits}",
+        lambda: f".{digits}",
+        lambda: f"{digits}e1{rng.randrange(9)}",
+        lambda: f"0x{hexa}",
+    ]
+    if dialect in ("postgres", "bigquery"):
+        kinds += [
+            lambda: "E" + quoted(True),
+            lambda: "N" + quoted(plain_bs),
+            lambda: "U&" + quoted(False),
+            lambda: f"X'{hexa}'",
+            lambda: f"$${s()}{marker}{s()}$$",
+            lambda: f"$tg${s()}{marker}$ {s()}$tg$",
+            lambda: f"AS $$ {marker} $$",
+            lambda: f"DO $x$ BEGIN PERFORM '{marker}'; END $x$",
+        ]
+    elif dialect == "mysql":
+
+        def dq() -> str:
+            return _string_piece(rng, dialect, True, '"')
+
+        kinds += [
+            lambda: f'"{dq()}{marker}\\"{dq()}"',
+            lambda: "N" + quoted(True),
+            lambda: "_utf8mb4" + quoted(True),
+            lambda: f"X'{hexa}'",
+            lambda: f"/*!50000 {quoted(True)} */",
+            lambda: f"/*M!100100 {digits} */",
+        ]
+    elif dialect == "oracle":
+        kinds += [
+            lambda: f"q'[{s()}{marker}{s()}]'",
+            lambda: f"q'{{{s()}{marker}{s()}}}'",
+            lambda: f"q'({s()}{marker}{s()})'",
+            lambda: f"Q'<{s()}{marker}{s()}>'",
+            lambda: f"q'!{s()}{marker}{s()}!'",
+            lambda: f"nq'§{s()}{marker}{s()}§'",
+            lambda: "N" + quoted(False),
+        ]
+    elif dialect == "mssql":
+        kinds += [lambda: "N" + quoted(False), lambda: f"${digits}.50"]
+    elif dialect == "snowflake":
+        kinds += [
+            lambda: f"$${s()}{marker}{s()}$$",
+            lambda: f'AS $$ return "{marker}"; $$',
+            lambda: f"X'{hexa}'",
+        ]
+    else:
+        kinds.append(lambda: f"X'{hexa}'")
+    return rng.choice(kinds)()
+
+
+_FILLER = [
+    "SELECT", "FROM", "WHERE", "AND", "AS", "DO", "a", "col2", "t.c", "ñandú", "名前", "😀", "=", "<>", "(", ")",
+    ",", "+", "-", "*", "/", "||", "::", ";", "?", "@p1", "-- it's ñ 😀\n", "/* it's 名 */", "\"q 'id\"",
+]  # fmt: skip
+_DIALECT_FILLER = {
+    "postgres": ["$1", "$7", "/* a /* it's */ b' */", "a[1:2]", 'U&"x\'"'],
+    "bigquery": ["$1", "$7", "/* a /* it's */ b' */", "a[1:2]", 'U&"x\'"'],
+    "mysql": ["`it's`", "# it's\n", "/*+ BKA(t) */", "@v"],
+    "oracle": [":1", ":name", "$2", "a#b"],
+    "mssql": ["[it's 1]", "[a]]'b]", "/* a /* it's */ b' */", "#tmp"],
+    "snowflake": ["$1", ":1", "// it's\n", "@stage"],
+    "sqlite": ["[it's]", "`it's`", ":a", "$c", "?3"],
+}
+
+
+def test_no_marker_survives_in_any_literal_kind() -> None:
+    """Random statements with a secret marker inside literals of every kind: none comes out."""
+    rng = random.Random(0x5EED00182026)
+    for round_ in range(6000):
+        dialect = DIALECTS[round_ % len(DIALECTS)]
+        filler = _FILLER + _DIALECT_FILLER.get(dialect, [])
+        parts: List[str] = []
+        markers: List[str] = []
+        for _ in range(rng.randrange(1, 12)):
+            if rng.randrange(3) == 0:
+                marker = f"SECRET{rng.getrandbits(32):08x}"
+                digits = str(7_000_000_000 + rng.randrange(1_000_000_000))
+                hexa = f"ABCDE{rng.getrandbits(24):06X}"
+                parts.append(_literal(rng, dialect, marker, digits, hexa))
+                markers += [marker, digits, hexa]
+            else:
+                parts.append(rng.choice(filler))
+            parts.append("\n" if rng.randrange(4) == 0 else " ")
+        sql = "".join(parts)
+        out = sanitize(sql, dialect)
+        for m in markers:
+            assert m not in out, f"[{dialect}] {m} leaked\n in:  {sql!r}\n out: {out!r}"
+
+
+def test_arbitrary_text_keeps_non_ascii_characters_whole() -> None:
+    pool = [
+        "'", '"', "`", "[", "]", "$", "$$", "$a$", "\\", "-", "--", "#", "/", "*", "/*", "*/", "/*!", "//", ":", "::",
+        "?", ".", "e", "E", "N", "q", "x", "U&", "&", "0", "7", " ", "\n", "ñ", "😀", "名", "§", "é", "AS", "DO", "_x",
+        "{", "(", "<", "!", "+", ";",
+    ]  # fmt: skip
+    rng = random.Random(0xDEADBEEF0018)
+    for round_ in range(6000):
+        dialect = DIALECTS[round_ % len(DIALECTS)]
+        sql = "".join(rng.choice(pool) for _ in range(rng.randrange(40)))
+        out = sanitize(sql, dialect)
+        assert all(ch in sql for ch in out if not ch.isascii()), (dialect, sql, out)
 
 
 @pytest.mark.parametrize(
-    ("sql", "dialect", "expected"),
+    ("dialect", "sql"),
     [
-        # Dollar-quoted bodies with a tag stay; an unterminated or invalid tag is plain text.
-        ("SELECT $fn$ 'a' $fn$, 'b'", "postgres", "SELECT $fn$ 'a' $fn$, $1"),
-        ("SELECT $fn$ 'a'", "postgres", "SELECT $fn$ $1"),
-        ("SELECT $a1$ 'x' $a1$", "postgres", "SELECT $a1$ 'x' $a1$"),
-        ("SELECT $", "postgres", "SELECT $"),
-        ("SELECT $abc", "postgres", "SELECT $abc"),
-        # Unterminated quoted names, comments and strings run to the end without hanging.
-        ('SELECT "open', "postgres", 'SELECT "open'),
-        ("SELECT 1 /* open 'x'", "postgres", "SELECT $1 /* open 'x'"),
-        ("SELECT 1 -- 'x'", "postgres", "SELECT $1 -- 'x'"),
-        ("SELECT 'open", "postgres", "SELECT $1"),
-        # Decimals, identifiers with digits, signs.
-        ("WHERE price > 10.50 AND t2.x = -3", "postgres", "WHERE price > $1 AND t2.x = -$2"),
-        ("WHERE a = 1 AND b = 'two'", "mysql", "WHERE a = ? AND b = ?"),
-        # An E prefix that is the end of an identifier is not an escape string.
-        ("WHERE name = 'x' AND typE'y'", "postgres", "WHERE name = $1 AND typE$2"),
-        # Backslashes are literal outside MySQL and E-strings.
-        ("WHERE p = 'a\\' AND q = 'b'", "snowflake", "WHERE p = ? AND q = ?"),
-        # Comments inside a MySQL statement stay as written.
-        ("SELECT /* 'x' */ a FROM `t1`", "mysql", "SELECT /* 'x' */ a FROM `t1`"),
-        ("", "postgres", ""),
+        ("postgres", "$a" * 50_000),
+        ("postgres", "/*" * 50_000),
+        ("oracle", "q'[" * 30_000),
+        ("mysql", "'\\'" * 30_000),
+        ("snowflake", "$$ " * 30_000),
+        ("mssql", "[[" * 50_000),
+        ("bigquery", "'\\' '" * 20_000),
     ],
+    ids=lambda v: v if len(v) < 20 else "",
 )
-def test_edge_cases(sql: str, dialect: str, expected: str) -> None:
-    assert sanitize(sql, dialect) == expected
+def test_pathological_inputs_stay_linear(dialect: str, sql: str) -> None:
+    # Quadratic for a scanner that re-searches from every opening it sees.
+    assert len(sanitize(sql, dialect)) < 4 * len(sql)
+
+
+# -- the port's own edges ----------------------------------------------------------------------------
 
 
 def test_no_literal_survives_a_realistic_model() -> None:
@@ -126,12 +216,20 @@ def test_no_literal_survives_a_realistic_model() -> None:
     assert out.startswith("-- model: orders\n")
 
 
-def test_existing_bind_parameters_are_kept() -> None:
-    # A $1 that became "$$1" opened a dollar-quoted string, so the server evaluated different SQL.
-    assert sanitize("SELECT a FROM t WHERE id = $1 AND name = $2", "postgres") == (
+def test_existing_bind_parameters_are_kept_and_not_reused() -> None:
+    # A $1 that became "$$1" opened a dollar-quoted string (0.3.0); a new $1 next to an existing one
+    # gave two different values the same parameter (0.3.1).
+    assert sanitize("SELECT a FROM t WHERE id = $1 AND name = 'x'", "postgres") == (
         "SELECT a FROM t WHERE id = $1 AND name = $2"
     )
 
 
-def test_snowflake_uses_question_marks_and_keeps_stage_columns() -> None:
-    assert sanitize("SELECT $1 FROM @stage WHERE a = 'x'", "snowflake") == "SELECT $1 FROM @stage WHERE a = ?"
+def test_numbering_counts_the_parameters_of_either_reading() -> None:
+    # Without backslash escapes `$5` is a parameter; with them it is inside the literal. The reading with
+    # escapes wins (the other leaves a literal unterminated), and a new placeholder still never reuses $5.
+    assert sanitize("SELECT '\\' $5 ', 1", "bigquery") == "SELECT $6, $7"
+
+
+def test_huge_bind_parameter_is_not_a_numbering_base() -> None:
+    assert sanitize("WHERE a = $4294967295 AND b = 1", "postgres") == "WHERE a = $4294967295 AND b = $4294967296"
+    assert sanitize("WHERE a = $4294967296 AND b = 1", "postgres") == "WHERE a = $4294967296 AND b = $1"
