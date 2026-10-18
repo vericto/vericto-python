@@ -476,6 +476,11 @@ docker run --rm -v "$PWD":/src:ro \
 
 A skipped run (`1 skipped` per test) means a variable is missing.
 
+## Contributing
+
+See [CONTRIBUTING.md](https://github.com/vericto/vericto-python/blob/main/CONTRIBUTING.md)
+for the checks CI runs, the coverage gate, and how releases are cut.
+
 ## Security
 
 See [SECURITY.md](SECURITY.md). Report vulnerabilities to security@vericto.com,

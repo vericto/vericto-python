@@ -488,9 +488,9 @@ def test_sanitized_postgres_workspace_keeps_bind_parameters(project: Path, clien
         ),
     )
     assert run(project, client, "--select", "customers", "--no-hooks", "--dialect", "postgres") == 0
-    # The existing $1 stays $1 (it became "$$1", a dollar quote); the literal gets the first number,
-    # as vericto-cli numbers it.
-    assert ci.statements() == ["select customer_id from stg_customers where id = $1 and email = $1"]
+    # The existing $1 stays $1 (it became "$$1", a dollar quote); the literal gets the next free number,
+    # as vericto-cli 1.8.2 numbers it (it got $1 too, one parameter for two values).
+    assert ci.statements() == ["select customer_id from stg_customers where id = $1 and email = $2"]
 
 
 # -- manifest and selection edge cases -------------------------------------------------
