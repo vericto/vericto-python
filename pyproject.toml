@@ -67,6 +67,7 @@ dev = [
   "mypy>=1.14",
   "sqlalchemy>=2.0",
   "snowflake-connector-python>=3.12",
+  "coverage[toml]>=7.10",
 ]
 
 [tool.hatch.version]
@@ -82,6 +83,17 @@ packages = ["src/vericto"]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 filterwarnings = ["error::vericto.errors.VerictoFailOpenWarning"]
+
+# Line and branch coverage. CI fails a job under 80%: the core job reports every module
+# except the integrations (their framework is not installed there), and each
+# integration job reports its own module (.github/workflows/ci.yml).
+[tool.coverage.run]
+branch = true
+source = ["vericto"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
 
 [tool.ruff]
 line-length = 120

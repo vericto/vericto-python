@@ -6,6 +6,26 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Tests for the alternate flows: the Runtime API down, slow, rate-limited, over
+  quota, answering 401/403/400 or a malformed body, under both fail modes; empty,
+  oversized and multi-statement SQL; bind parameters in every DB-API paramstyle;
+  `vericto.dbapi.wrap()` against a fake driver; Snowflake `execute_async`;
+  the CI-check client; the shared LangChain/LlamaIndex helpers. Line coverage is
+  99.8% and branch coverage 99.6% across the core and integration jobs (was 92.1%
+  and 80.2%). No change to the package itself.
+- CI fails a job under 80% line and branch coverage (`coverage` in the dev
+  group, `[tool.coverage]` in `pyproject.toml`); see README, "Coverage".
+
+### Known issues
+
+- In a workspace in `sanitized` telemetry mode, `vericto-dbt` rewrites an
+  existing `$1` (a PostgreSQL bind parameter, a Snowflake stage column) as `$$1`,
+  which opens a dollar-quoted string, and uses `$N` placeholders for Snowflake
+  where vericto-cli 1.8.0 uses `?`. The port has not picked up vericto-cli
+  1.8.0's sanitizer rules yet; two `xfail` tests in `tests/test_sanitize.py` track it.
+
 ## [0.3.0] - 2026-10-18
 
 A support-policy release: Python 3.9 and Airflow 2 are dropped. The API is

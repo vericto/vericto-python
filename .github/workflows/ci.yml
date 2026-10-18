@@ -60,7 +60,13 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ matrix.python }}
       - run: uv sync --locked
-      - run: uv run pytest
+      - name: Test, with line and branch coverage (fails under 80%)
+        env:
+          # Covered in their own "extras" job: their framework is not installed here.
+          INTEGRATIONS: "*/vericto/langchain.py,*/vericto/llamaindex.py,*/vericto/airflow/*"
+        run: |
+          uv run coverage run -m pytest
+          uv run coverage report --omit="$INTEGRATIONS"
 
   extras:
     # One job per optional integration, against the framework versions pinned in
@@ -77,22 +83,26 @@ jobs:
             python: "3.13"
             requirements: ci/requirements-langchain.txt
             tests: tests/test_langchain.py
+            covers: src/vericto/langchain.py
             typecheck: src/vericto/langchain.py src/vericto/_agent.py tests/test_langchain.py
           - extra: llamaindex
             python: "3.13"
             requirements: ci/requirements-llamaindex.txt
             tests: tests/test_llamaindex.py
+            covers: src/vericto/llamaindex.py
             typecheck: src/vericto/llamaindex.py src/vericto/_agent.py tests/test_llamaindex.py
           - extra: dbt
             python: "3.13"
             requirements: ""
             tests: tests/test_dbt.py
+            covers: src/vericto/dbt.py
             typecheck: ""
           - extra: airflow-3.3
             python: "3.13"
             requirements: ci/requirements-airflow-3.txt
             constraints: https://raw.githubusercontent.com/apache/airflow/constraints-3.3.2/constraints-3.13.txt
             tests: tests/test_airflow.py
+            covers: src/vericto/airflow/*
             typecheck: src/vericto/airflow tests/test_airflow.py
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -116,9 +126,13 @@ jobs:
       - name: Test
         env:
           TESTS: ${{ matrix.tests }}
+          COVERS: ${{ matrix.covers }}
         run: |
           export AIRFLOW_HOME="$RUNNER_TEMP/airflow-home"
-          "$RUNNER_TEMP/extra/bin/python" -m pytest $TESTS
+          # Line and branch coverage of this job's integration module; fails under 80% (pyproject.toml).
+          uv pip install --python "$RUNNER_TEMP/extra/bin/python" coverage==7.16.2
+          "$RUNNER_TEMP/extra/bin/python" -m coverage run -m pytest $TESTS
+          "$RUNNER_TEMP/extra/bin/python" -m coverage report --include="$COVERS"
       - name: Type-check against the real framework
         if: matrix.typecheck != ''
         env:

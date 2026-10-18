@@ -175,3 +175,33 @@ def test_nl_sql_query_engine_masks(fake: FakeVericto, guard: Vericto, engine: En
     )
     response = query_engine.query("List the emails")
     assert "ana@example.com" not in str(response) and "***" in str(response)
+
+
+def test_properties_and_close(fake: FakeVericto, guard: Vericto, engine: Engine) -> None:
+    db = VerictoSQLDatabase(engine, guard=guard, on_block="raise")
+    assert db.vericto_guard is guard and db.vericto_dialect == "sqlite" and db.on_block == "raise"
+    db.close_vericto()
+    db.close_vericto()
+    db.run_sql("SELECT 1")
+    assert fake.requests == []
+
+
+def test_flagged_runs_and_unknown_on_block_is_refused(fake: FakeVericto, guard: Vericto, engine: Engine) -> None:
+    from tests.conftest import flagged
+    from vericto import VerictoConfigError
+
+    fake.on(lambda sql: "users" in sql, flagged("VERICTO-030"))
+    text_, meta = VerictoSQLDatabase(engine, guard=guard).run_sql("SELECT email FROM users")
+    assert "ana@example.com" in text_ and "vericto_blocked" not in meta
+    with pytest.raises(VerictoConfigError):
+        VerictoSQLDatabase(engine, guard=guard, on_block="ignore")  # type: ignore[arg-type]
+
+
+def test_dialect_override_is_refused_when_the_server_lacks_it(
+    fake: FakeVericto, guard: Vericto, engine: Engine
+) -> None:
+    from vericto import VerictoUnsupportedDialect
+
+    fake.dialects = ["postgres"]
+    with pytest.raises(VerictoUnsupportedDialect):
+        VerictoSQLDatabase(engine, guard=guard, dialect="sqlite")

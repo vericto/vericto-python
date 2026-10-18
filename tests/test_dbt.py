@@ -501,3 +501,141 @@ def test_client_repr_hides_the_key(ci: FakeCi) -> None:
 )
 def test_sanitize_matches_vericto_cli(sql: str, dialect: str, expected: str) -> None:
     assert sanitize(sql, dialect) == expected
+
+
+# -- manifest and selection edge cases -------------------------------------------------
+
+
+def test_unreadable_or_foreign_manifests_are_usage_errors(tmp_path: Path) -> None:
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json")
+    with pytest.raises(dbt.UsageError, match="Cannot read"):
+        dbt.load_manifest(broken)
+    other = tmp_path / "other.json"
+    other.write_text(json.dumps({"sources": {}}))
+    with pytest.raises(dbt.UsageError, match="not a dbt manifest"):
+        dbt.load_manifest(other)
+    with pytest.raises(dbt.UsageError, match="not a dbt manifest"):
+        dbt.load_manifest(_write(tmp_path / "list.json", [1, 2]))
+
+
+def _write(path: Path, data: Any) -> Path:
+    path.write_text(json.dumps(data))
+    return path
+
+
+def test_dialect_override_and_missing_adapter() -> None:
+    assert dbt.dialect_for("snowflake", "SNOWFLAKE") == ("snowflake", [])  # same dialect: no note
+    name, notes = dbt.dialect_for("databricks", "postgres")
+    assert name == "postgres" and "evaluating as 'postgres' because of --dialect" in notes[0]
+    assert dbt.dialect_for(None, "mysql") == ("mysql", [])
+    with pytest.raises(dbt.UsageError, match=r"no metadata\.adapter_type"):
+        dbt.dialect_for(None, None)
+
+
+def test_hooks_in_every_shape_and_disabled_nodes(project: Path) -> None:
+    def change(m: Dict[str, Any]) -> None:
+        node = m["nodes"]["model.jaffle.customers"]
+        node["config"] = {
+            "pre_hook": ["update audit set n = n + 1 where id = 1", {"sql": "  "}, 42],  # underscore spelling
+            "post-hook": "not a list",
+        }
+        m["nodes"]["model.jaffle.stg_customers"]["config"] = {"enabled": False}
+        m["nodes"]["junk"] = "not a node"
+
+    edit_manifest(project, change)
+    manifest = dbt.load_manifest(project / "target" / "manifest.json")
+    items, _ = dbt.collect(manifest, project_dir=project, target=project / "target")
+    kinds = [(i.unique_id, i.kind) for i in items]
+    assert ("model.jaffle.customers", "pre-hook") in kinds
+    assert [i.sql for i in items if i.kind == "pre-hook"] == ["update audit set n = n + 1 where id = 1"]
+    assert not any(i.unique_id == "model.jaffle.stg_customers" for i in items)
+
+
+def test_operation_with_plain_raw_sql_is_checked(project: Path) -> None:
+    def change(m: Dict[str, Any]) -> None:
+        node = m["nodes"]["operation.jaffle.jaffle-on-run-end-0"]
+        node.pop("compiled_code", None)
+        node["raw_code"] = "vacuum analytics.events"
+
+    edit_manifest(project, change)
+    manifest = dbt.load_manifest(project / "target" / "manifest.json")
+    items, skipped = dbt.collect(manifest, project_dir=project, target=project / "target")
+    assert [i.sql for i in items if i.kind == "on-run-end"] == ["vacuum analytics.events"]
+    assert not any(s.kind == "on-run-end" for s in skipped)
+
+
+def test_sql_source_run_without_run_artifacts_skips(project: Path) -> None:
+    manifest = dbt.load_manifest(project / "target" / "manifest.json")
+    shutil.rmtree(project / "target" / "run", ignore_errors=True)
+    items, skipped = dbt.collect(manifest, project_dir=project, target=project / "target", sql_source="run")
+    assert not any(i.kind in ("model", "snapshot") for i in items)
+    assert any("no compiled SQL" in s.reason for s in skipped)
+
+
+def test_select_matching_nothing_is_a_clean_run(
+    project: Path, client: CiCheckClient, ci: FakeCi, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert run(project, client, "--select", "does_not_exist*", "--no-hooks") == 0
+    assert "Nothing to check." in capsys.readouterr().out
+    assert ci.requests == []
+
+
+def test_backend_answers_with_odd_entries(project: Path, client: CiCheckClient, ci: FakeCi, tmp_path: Path) -> None:
+    def odd(_request: Request) -> Response:
+        body = {
+            "queries": ["junk", {"file_index": 99, "line": 1, "status": "BLOCKED"}, {"file_index": 1, "line": 2}],
+            "summary": {},
+            "ci_checks_remaining": "unknown",
+        }
+        return Response(json.dumps(body), status=200, content_type="application/json")
+
+    ci.server.clear()
+    ci.server.expect_request("/api/v1/ci/config").respond_with_json(ci.config)
+    ci.server.expect_request("/api/v1/ci/check-key").respond_with_handler(odd)
+    out = tmp_path / "r.json"
+    # Out-of-range and malformed entries are ignored; a result without a status counts as BLOCKED.
+    assert run(project, client, "--format", "json", "--output", str(out)) == 1
+    doc = json.loads(out.read_text())
+    assert [r["status"] for r in doc["results"]] == ["BLOCKED"]
+    assert doc["ruleset_version"] is None and doc["ci_checks_remaining"] is None
+
+
+def test_table_output_to_a_file(project: Path, client: CiCheckClient, ci: FakeCi, tmp_path: Path) -> None:
+    out = tmp_path / "report.txt"
+    assert run(project, client, "--output", str(out)) == 0
+    assert "vericto-dbt: PASS" in out.read_text()
+
+
+@pytest.mark.parametrize(
+    ("explicit", "expected"),
+    [("", ""), ("repo", "repo/"), ("repo/", "repo/")],
+)
+def test_sarif_uri_prefix_explicit(project: Path, explicit: str, expected: str) -> None:
+    assert dbt._uri_prefix(project, explicit) == expected
+
+
+def test_sarif_uri_prefix_from_the_working_directory(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(project)
+    assert dbt._uri_prefix(project, None) == ""
+    monkeypatch.chdir(project / "target")
+    assert dbt._uri_prefix(project, None) == ""  # the project is above the working directory
+    monkeypatch.chdir(project.parent)
+    assert dbt._uri_prefix(project, None) == "jaffle/"
+
+
+def test_console_main_exits_with_the_code(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("sys.argv", ["vericto-dbt", "check", "--project-dir", str(tmp_path / "none")])
+    with pytest.raises(SystemExit) as info:
+        dbt.console_main()
+    assert info.value.code == 2
+
+
+@pytest.mark.filterwarnings("ignore:'vericto.__main__' found in sys.modules:RuntimeWarning")
+def test_python_dash_m_vericto(monkeypatch: pytest.MonkeyPatch) -> None:
+    import runpy
+
+    monkeypatch.setattr("sys.argv", ["vericto", "nope"])
+    with pytest.raises(SystemExit) as info:
+        runpy.run_module("vericto", run_name="__main__")
+    assert info.value.code == 2

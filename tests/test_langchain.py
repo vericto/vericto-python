@@ -218,3 +218,62 @@ def test_sql_agent_reads_the_block_and_corrects_itself(fake: FakeVericto, guard:
     assert result["output"] == "deleted user 2"
     with engine.connect() as c:
         assert [r[0] for r in c.execute(text("SELECT id FROM users"))] == [1]
+
+
+def test_internal_schema_statements() -> None:
+    from vericto.langchain import _internal_statements
+
+    assert _internal_statements(None) == frozenset()
+    statements = _internal_statements("analytics")
+    assert {
+        "SET search_path TO analytics",
+        "USE analytics",
+        "ALTER SESSION SET CURRENT_SCHEMA = analytics",
+    } <= statements
+    assert any(s.startswith("SET SCHEMA") for s in statements)
+    # A name SAP HANA would refuse: no SET SCHEMA statement is expected for it.
+    assert not any(s.startswith("SET SCHEMA") for s in _internal_statements('bad"; DROP TABLE x; --'))
+
+
+def test_schema_database_costs_one_evaluation_per_query(fake: FakeVericto, guard: Vericto, engine: Engine) -> None:
+    db = VerictoSQLDatabase(engine, guard=guard, schema="main", sample_rows_in_table_info=0)
+    before = len(fake.requests)
+    assert "ana@example.com" in str(db.run("SELECT email FROM users WHERE id = 1"))
+    assert len(fake.requests) == before + 1
+
+
+def test_blocked_with_fetch_one_and_run_no_throw(fake: FakeVericto, guard: Vericto, engine: Engine) -> None:
+    fake.on(lambda sql: sql.startswith("DELETE"), blocked("VERICTO-001"))
+    db = VerictoSQLDatabase(engine, guard=guard, sample_rows_in_table_info=0)
+    assert str(db.run("DELETE FROM users", fetch="one")).startswith("Error: Vericto blocked this query (VERICTO-001")
+    assert "VERICTO-001" in str(db.run_no_throw("DELETE FROM users"))
+    assert _count(engine) == 2
+
+
+def test_database_properties(guard: Vericto, engine: Engine) -> None:
+    db = VerictoSQLDatabase(engine, guard=guard, sample_rows_in_table_info=0)
+    assert db.vericto_guard is guard and db.vericto_dialect == "sqlite" and db.on_block == "return"
+
+
+def test_check_tool_builds_its_guard_from_the_environment(fake: FakeVericto, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.conftest import API_KEY, DATABASE_ID
+
+    monkeypatch.setenv("VERICTO_API_KEY", API_KEY)
+    monkeypatch.setenv("VERICTO_DATABASE_ID", DATABASE_ID)
+    monkeypatch.setenv("VERICTO_API_URL", fake.url)
+    tool = VerictoCheckSQLTool(dialect="postgresql")
+    assert tool.dialect == "postgres"
+    assert tool.invoke({"query": "SELECT 1"}).startswith("ALLOWED")
+    assert fake.requests[-1]["dialect"] == "postgres"
+
+
+def test_check_tool_prefers_explicit_guard_and_dialect_over_db(
+    fake: FakeVericto, guard: Vericto, evaluator: Any, engine: Engine
+) -> None:
+    db = VerictoSQLDatabase(engine, guard=guard, sample_rows_in_table_info=0)
+    other = Vericto(evaluator)
+    tool = VerictoCheckSQLTool(db=db, guard=other, dialect="snowflake")
+    assert tool.guard is other and tool.dialect == "snowflake"
+    tool.guard = None
+    with pytest.raises(RuntimeError, match="not initialised"):
+        tool.check("SELECT 1")

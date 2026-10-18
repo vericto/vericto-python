@@ -188,3 +188,94 @@ def test_guarded_cursor_context_manager_and_attributes(raw: FakeSnowflakeConnect
         cur.execute("SELECT 1")
         cur.arraysize = 50
         assert cur.wrapped.arraysize == 50
+
+
+def test_execute_async_with_parameters_and_keywords(fake: FakeVericto, raw: FakeSnowflakeConnection, conn: Any) -> None:
+    fake.on(lambda sql: sql.startswith("DELETE"), blocked())
+    cur = conn.cursor()
+    cur.execute_async("SELECT * FROM orders WHERE id = %s", (7,))
+    assert fake.requests[-1]["query"] == "SELECT * FROM orders WHERE id = ?"
+    cur.execute_async(command="SELECT * FROM orders WHERE id = %(id)s", params={"id": 7})
+    assert fake.requests[-1]["query"] == "SELECT * FROM orders WHERE id = ?"
+    with pytest.raises(VerictoBlocked):
+        cur.execute_async(command="DELETE FROM orders WHERE id = %s OR 1 = 1", params=(1,))
+    assert raw.log == ["SELECT * FROM orders WHERE id = %s", "SELECT * FROM orders WHERE id = %(id)s"]
+
+
+def test_execute_async_runs_the_masked_rewrite(fake: FakeVericto, raw: FakeSnowflakeConnection, conn: Any) -> None:
+    fake.on(lambda sql: sql.startswith("SELECT email"), masked("SELECT '***' AS email FROM users WHERE id = ?"))
+    assert conn.cursor().execute_async("SELECT email FROM users WHERE id = %s", (1,)) == {"queryId": "01b2-async"}
+    assert raw.log == ["SELECT '***' AS email FROM users WHERE id = %s"]
+
+
+def test_executemany_with_pyformat(fake: FakeVericto, raw: FakeSnowflakeConnection, conn: Any) -> None:
+    conn.cursor().executemany("INSERT INTO t (a) VALUES (%(a)s)", [{"a": 1}, {"a": 2}])
+    assert fake.queries() == ["INSERT INTO t (a) VALUES (?)"]
+    assert raw.log == ["INSERT INTO t (a) VALUES (%(a)s)"]
+
+
+def test_execute_string_without_cursors(raw: FakeSnowflakeConnection, conn: Any) -> None:
+    assert conn.execute_string("SELECT 1; SELECT 2;", return_cursors=False) == []
+    assert raw.log == ["SELECT 1;", "SELECT 2;"]
+
+
+def test_execute_string_with_remove_comments(fake: FakeVericto, raw: FakeSnowflakeConnection, conn: Any) -> None:
+    conn.execute_string("SELECT 1; -- note\nSELECT 2;", remove_comments=True)
+    assert fake.queries() == ["SELECT 1;", "SELECT 2;"]
+
+
+def test_masked_script_with_comments_keeps_statement_boundaries(
+    fake: FakeVericto, raw: FakeSnowflakeConnection, conn: Any
+) -> None:
+    fake.on(lambda sql: sql.startswith("SELECT email"), masked("SELECT '***' AS email FROM users"))
+    conn.execute_string("SELECT email FROM users; -- trailing note\nSELECT 2 -- no terminator")
+    # Still two statements: the terminator added after the trailing comment is never needed.
+    assert vericto.snowflake.split_script(raw.scripts[-1], remove_comments=True) == [
+        "SELECT '***' AS email FROM users;",
+        "SELECT 2",
+    ]
+
+
+def test_execute_string_under_fail_open(fake: FakeVericto, raw: FakeSnowflakeConnection, evaluator: Any) -> None:
+    from vericto import VerictoFailOpenWarning, VerictoUnavailable
+
+    fake.on(lambda sql: True, {"status": 504, "body": {}})
+    closed = vericto.snowflake.wrap(raw, guard=Vericto(evaluator))
+    with pytest.raises(VerictoUnavailable):
+        closed.execute_string("SELECT 1; SELECT 2;")
+    assert raw.scripts == []
+    opened = vericto.snowflake.wrap(raw, guard=Vericto(evaluator, fail_mode="open"))
+    with pytest.warns(VerictoFailOpenWarning):
+        opened.execute_string("SELECT 1; SELECT 2;")
+    assert raw.scripts == ["SELECT 1; SELECT 2;"]
+
+
+def test_split_script_matches_what_the_connector_runs() -> None:
+    # execute_string runs every non-empty piece, bare ';' and comment-only ones included,
+    # so each of them is evaluated too.
+    assert vericto.snowflake.split_script("SELECT 1;;  ;\n-- c\n") == ["SELECT 1;", ";", ";", "-- c"]
+    assert vericto.snowflake.split_script("SELECT 1;;  ;\n-- c\n", remove_comments=True) == ["SELECT 1;", ";", ";"]
+    assert vericto.snowflake.split_script("") == []
+
+
+def test_wrap_builds_the_guard_from_the_environment(
+    fake: FakeVericto, raw: FakeSnowflakeConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.conftest import API_KEY, DATABASE_ID
+
+    monkeypatch.setenv("VERICTO_API_KEY", API_KEY)
+    monkeypatch.setenv("VERICTO_DATABASE_ID", DATABASE_ID)
+    monkeypatch.setenv("VERICTO_API_URL", fake.url)
+    vericto.snowflake.wrap(raw).cursor().execute("SELECT 1")
+    assert fake.requests[-1]["dialect"] == "snowflake"
+
+
+def test_execute_string_passes_a_non_list_result_through(guard: Vericto) -> None:
+    class NoCursors(FakeSnowflakeConnection):
+        def execute_string(self, sql_text: str, remove_comments: bool = False, **kw: Any) -> Any:  # type: ignore[override]
+            self.scripts.append(sql_text)
+            return None
+
+    raw = NoCursors()
+    assert vericto.snowflake.wrap(raw, guard=guard).execute_string("SELECT 1;") is None
+    assert raw.scripts == ["SELECT 1;"]
