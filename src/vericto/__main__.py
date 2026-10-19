@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """``python -m vericto dbt check ...``: the same command as ``vericto-dbt``."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Guard a Snowflake connection with Vericto.
 
 export VERICTO_API_KEY=vtro_...           # scope proxy:evaluate

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,8 +7,8 @@ name = "vericto"
 dynamic = ["version"]
 description = "Official Vericto SDK for Python: check SQL before it runs. Wrappers for snowflake-connector-python, sqlite3, SQLAlchemy and any DB-API driver; integrations for LangChain, LlamaIndex, dbt and Airflow."
 readme = "README.md"
-license = "Elastic-2.0"
-license-files = ["LICENSE"]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.10"
 authors = [{ name = "Vericto", email = "security@vericto.com" }]
 keywords = ["sql", "firewall", "security", "snowflake", "sqlite", "sqlalchemy", "ai-agents", "langchain", "llamaindex", "dbt", "airflow", "vericto"]
@@ -74,7 +74,7 @@ dev = [
 path = "src/vericto/_version.py"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/vericto", "tests", "examples", "README.md", "README.es.md", "CHANGELOG.md", "LICENSE", "SECURITY.md"]
+include = ["src/vericto", "tests", "examples", "README.md", "README.es.md", "CHANGELOG.md", "LICENSE", "NOTICE", "TRADEMARKS.md", "SECURITY.md"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vericto"]

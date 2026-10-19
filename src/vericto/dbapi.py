@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Generic DB-API 2.0 (PEP 249) wrappers.
 
 :func:`wrap` puts a guard in front of any DB-API connection: every

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Guard any DB-API driver, or call the guard yourself."""
 
 from __future__ import annotations

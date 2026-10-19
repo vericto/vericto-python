@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """One listener for any SQLAlchemy engine: Snowflake, PostgreSQL, MySQL, Oracle, SQL Server."""
 
 from __future__ import annotations

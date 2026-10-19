@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Shared pieces of the LLM-framework integrations (LangChain, LlamaIndex).
 
 * :func:`block_message`: the text an agent receives instead of rows when Vericto

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """vericto.dbapi.wrap() against a recording fake DB-API driver and the local Runtime API stand-in."""
 
 from __future__ import annotations

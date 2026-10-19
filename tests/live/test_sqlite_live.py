@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Opt-in end-to-end test of vericto.sqlite against a real Vericto Runtime API. Skipped unless configured.
 
 Unlike the rest of the suite, Vericto here is a real server (staging, by default):

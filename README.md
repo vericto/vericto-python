@@ -494,7 +494,12 @@ GHSA-vxq7-64xx-v4gw. The repository's dev lock (`uv.lock`) pins 2.8.0.
 
 ## License
 
-[Elastic License 2.0](LICENSE).
+Open source under the [Apache License 2.0](LICENSE) (SPDX `Apache-2.0`) since
+0.4.0. Versions 0.3.2 and earlier were released under the Elastic License 2.0
+and remain under it. Copyright 2026 Vericto S.A.S.; see [NOTICE](NOTICE). The
+license grants no right to the Vericto name or logo: see
+[TRADEMARKS.md](TRADEMARKS.md). The Vericto service the SDK calls is offered
+under its own [terms](https://vericto.com/terms).
 
 ---
 
@@ -535,3 +540,8 @@ SQLite: el servidor de Vericto evalúa el dialecto `sqlite` (vericto-engine
 4.1.0+). `vericto.sqlite.connect()` igual consulta `GET /api/v1/meta/config` y,
 si un servidor no lo anuncia, falla con `VerictoUnsupportedDialect` sin ejecutar
 nada.
+
+Licencia: código abierto bajo la [Apache License 2.0](LICENSE) desde 0.4.0. Las
+versiones 0.3.2 y anteriores se publicaron bajo la Elastic License 2.0 y siguen
+bajo ella. La licencia no otorga derechos sobre la marca Vericto
+([TRADEMARKS.md](TRADEMARKS.md)).

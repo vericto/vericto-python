@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """vericto-dbt against fixture manifests and a local stand-in for the CI-check API."""
 
 from __future__ import annotations

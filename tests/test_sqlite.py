@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """End to end with the real sqlite3 module and a local Runtime API stand-in."""
 
 from __future__ import annotations

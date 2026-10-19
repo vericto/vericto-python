@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """The evaluator interface.
 
 An evaluator turns ``(sql, dialect)`` into a :class:`~vericto.Verdict`. This release

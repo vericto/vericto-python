@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """CiCheckClient (the CI-check API used by vericto-dbt): configuration, requests and failures."""
 
 from __future__ import annotations

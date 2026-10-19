@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """airflow_local_settings.py: guard every common-sql task with Vericto, no DAG changes.
 
 Put it on the PYTHONPATH (or in $AIRFLOW_HOME/config) of the DAG processor and of

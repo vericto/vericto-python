@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Verdict.from_response(): how a Runtime API body becomes a decision, and the errors built from it."""
 
 from __future__ import annotations

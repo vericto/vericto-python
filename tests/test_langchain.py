@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """vericto.langchain against the real langchain-community / langchain-core (no LLM calls)."""
 
 from __future__ import annotations

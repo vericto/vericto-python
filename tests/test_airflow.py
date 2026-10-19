@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """vericto.airflow against a real Airflow (2.9+ or 3.x) and the common-sql + sqlite providers.
 
 Tasks run with ``dag.test()`` (Airflow's in-process runner, metadata DB in a temp

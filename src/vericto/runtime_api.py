@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Evaluator backed by the Vericto Runtime API (``POST /api/v1/proxy/query``)."""
 
 from __future__ import annotations

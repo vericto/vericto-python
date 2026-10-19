@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """A cluster policy that guards existing SQL tasks with Vericto, without DAG changes.
 
 In ``airflow_local_settings.py`` (on ``PYTHONPATH`` or in ``$AIRFLOW_HOME/config``)

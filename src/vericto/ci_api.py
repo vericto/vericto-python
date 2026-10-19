@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Vericto S.A.S.
+# SPDX-License-Identifier: Apache-2.0
+
 """Client for the Vericto CI-check API (``POST /api/v1/ci/check-key``).
 
 The endpoint vericto-cli uses for pre-execution checks: build-time SQL (migrations,
