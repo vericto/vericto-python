@@ -55,10 +55,12 @@ class GuardedCursor:
 
     @property
     def wrapped(self) -> Any:
+        """The driver's own cursor. SQL run through it is **not** checked."""
         return self._cursor
 
     @property
     def connection(self) -> Any:
+        """The guarded connection this cursor came from (else the driver cursor's)."""
         return self._connection if self._connection is not None else getattr(self._cursor, "connection", None)
 
     def _wrap_result(self, result: Any) -> Any:
@@ -69,11 +71,17 @@ class GuardedCursor:
         return self._guard.prepare(operation, self._dialect, paramstyle=self._paramstyle if has_params else None)
 
     def execute(self, operation: str, *args: Any, **kwargs: Any) -> Any:
+        """Check ``operation`` with Vericto, then run it (or its masked rewrite) on the driver.
+
+        Raises :class:`~vericto.VerictoBlocked` before the driver is called when it is
+        blocked, and :class:`~vericto.VerictoUnavailable` when there is no verdict and
+        the guard fails closed. Parameters go to the driver, never to Vericto.
+        """
         sql = self._prepare(operation, _has_params(args, kwargs))
         return self._wrap_result(self._cursor.execute(sql, *args, **kwargs))
 
     def executemany(self, operation: str, seq_of_parameters: Any, *args: Any, **kwargs: Any) -> Any:
-        # One statement, many parameter sets: one check.
+        """:meth:`execute` for many parameter sets: one check for the statement."""
         sql = self._prepare(operation, True)
         return self._wrap_result(self._cursor.executemany(sql, seq_of_parameters, *args, **kwargs))
 
@@ -124,24 +132,29 @@ class GuardedConnection:
 
     @property
     def wrapped(self) -> Any:
+        """The driver's own connection. SQL run through it is **not** checked."""
         return self._conn
 
     @property
     def guard(self) -> Vericto:
+        """The :class:`~vericto.Vericto` that checks this connection's statements."""
         return self._guard
 
     @property
     def dialect(self) -> str:
+        """The Vericto dialect the statements are evaluated as."""
         return self._dialect
 
     @property
     def paramstyle(self) -> Optional[str]:
+        """The driver's DB-API paramstyle (``format``/``pyformat`` change what is evaluated)."""
         return self._paramstyle
 
     def _guard_cursor(self, cursor: Any) -> GuardedCursor:
         return self.cursor_class(cursor, self._guard, self._dialect, self, self._paramstyle)
 
     def cursor(self, *args: Any, **kwargs: Any) -> GuardedCursor:
+        """A :class:`GuardedCursor` over the driver's ``cursor(*args, **kwargs)``."""
         return self._guard_cursor(self._conn.cursor(*args, **kwargs))
 
     def execute(self, operation: str, *args: Any, **kwargs: Any) -> Any:

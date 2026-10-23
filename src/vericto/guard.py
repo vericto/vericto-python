@@ -82,9 +82,12 @@ class Vericto:
             )
         self.evaluator = evaluator
 
-        mode = (fail_mode if fail_mode is not None else os.environ.get("VERICTO_FAIL_MODE", "closed")).strip().lower()
+        # An empty or whitespace-only VERICTO_FAIL_MODE is unset: the default, closed.
+        from_env = os.environ.get("VERICTO_FAIL_MODE", "").strip()
+        source = "fail_mode" if fail_mode is not None or not from_env else "VERICTO_FAIL_MODE"
+        mode = (fail_mode if fail_mode is not None else (from_env or "closed")).strip().lower()
         if mode not in FAIL_MODES:
-            raise VerictoConfigError(f"fail_mode must be 'closed' or 'open', got {mode!r}.")
+            raise VerictoConfigError(f"{source} must be 'closed' or 'open', got {mode!r}.")
         self.fail_mode = mode
         if cache_ttl < 0 or cache_size < 1:
             raise VerictoConfigError("cache_ttl must be >= 0 and cache_size >= 1.")
@@ -206,6 +209,7 @@ class Vericto:
         return [self.enforce(statement, dialect) for statement in statements]
 
     def clear_cache(self) -> None:
+        """Drop every cached verdict (a no-op when the cache is off)."""
         if self._cache is not None:
             self._cache.clear()
 

@@ -111,10 +111,12 @@ class VerictoBlocked(VerictoError):
 
     @property
     def findings(self) -> tuple[Finding, ...]:
+        """The rules that matched (``verdict.findings``)."""
         return self.verdict.findings
 
     @property
     def suggested_fix(self) -> Optional[str]:
+        """The safer statement Vericto proposes, when it has one (``verdict.suggested_fix``)."""
         return self.verdict.suggested_fix
 
 

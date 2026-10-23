@@ -36,6 +36,7 @@ class SnowflakeGuardedCursor(GuardedCursor):
     """A Snowflake cursor checked by Vericto (``execute_async`` included)."""
 
     def execute_async(self, *args: Any, **kwargs: Any) -> Any:
+        """``cursor.execute_async``, checked like ``execute`` before the query is submitted."""
         if args:
             command, rest = args[0], args[1:]
             sql = self._prepare(command, _has_params(rest, kwargs))
@@ -51,6 +52,11 @@ class SnowflakeGuardedConnection(GuardedConnection):
     cursor_class = SnowflakeGuardedCursor
 
     def execute_string(self, sql_text: str, remove_comments: bool = False, *args: Any, **kwargs: Any) -> Any:
+        """``connection.execute_string``: every statement is evaluated before the first runs.
+
+        A block anywhere raises :class:`~vericto.VerictoBlocked` and nothing executes;
+        masked statements run as their rewrite. Returns guarded cursors.
+        """
         guarded = self._guard_script(sql_text, remove_comments)
         result = self._conn.execute_string(guarded, remove_comments, *args, **kwargs)
         if isinstance(result, list):
@@ -60,6 +66,7 @@ class SnowflakeGuardedConnection(GuardedConnection):
     def execute_stream(
         self, stream: StringIO, remove_comments: bool = False, *args: Any, **kwargs: Any
     ) -> Iterator[Any]:
+        """``connection.execute_stream``: reads the whole stream and checks it like :meth:`execute_string`."""
         guarded = self._guard_script(stream.read(), remove_comments)
         for cursor in self._conn.execute_stream(StringIO(guarded), remove_comments, *args, **kwargs):
             yield self._guard_cursor(cursor)
@@ -75,7 +82,8 @@ class SnowflakeGuardedConnection(GuardedConnection):
 
 def split_script(sql_text: str, remove_comments: bool = False) -> List[str]:
     """Split a script the way ``execute_string`` does (the connector's splitter)."""
-    from snowflake.connector.util_text import split_statements
+    # snowflake-connector-python 5.x keeps util_text as a compatibility re-export.
+    from snowflake.connector.util_text import split_statements  # type: ignore[attr-defined,unused-ignore]
 
     return [stmt for stmt, _ in split_statements(StringIO(sql_text), remove_comments=remove_comments) if stmt.strip()]
 

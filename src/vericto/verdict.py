@@ -44,12 +44,22 @@ class Verdict:
     Attributes:
         decision: see :class:`Decision`.
         sql: the statement as submitted.
+        dialect: the Vericto dialect it was evaluated as.
+        rule_code: the deciding rule (``VERICTO-001``), when a rule matched.
+        severity: that rule's severity (``critical``, ``high``, ``medium``, ``low``).
+        message: the server's reason, when it adds one beyond the rule code; for
+            ``UNEVALUATED``, why there is no verdict.
+        suggested_fix: a safer statement Vericto proposes, when it has one.
         rewritten_query: when set, the statement to run **instead of** ``sql``: the
             sensitive columns it reads come back masked (Sensitive Column Protection).
         findings: the rules that matched (empty when allowed).
         sensitive_columns: tagged columns the statement reads.
         access_denied: what the API key's allowlist denied (agent access).
+        parse_error: the parser's message, on ``PARSE_ERROR``.
         event_id: the audit-trail event id, to look the evaluation up in Vericto.
+        ruleset_version: the ruleset the verdict was computed under, when the server
+            reports it (the cache drops every entry when it changes).
+        cached: True when the verdict came from the guard's cache, not the server.
         raw: the response body, for fields this version does not model yet.
     """
 
@@ -72,6 +82,7 @@ class Verdict:
 
     @property
     def blocked(self) -> bool:
+        """True when Vericto blocked the statement: it must not run."""
         return self.decision is Decision.BLOCKED
 
     @property
@@ -129,6 +140,7 @@ class Verdict:
 
     @classmethod
     def unevaluated(cls, sql: str, dialect: str, reason: str) -> Verdict:
+        """The verdict the guard records when Vericto gave none and ``fail_mode`` is ``"open"``."""
         return cls(decision=Decision.UNEVALUATED, sql=sql, dialect=dialect, message=reason)
 
 

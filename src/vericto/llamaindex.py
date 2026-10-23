@@ -78,14 +78,17 @@ class VerictoSQLDatabase(SQLDatabase):
 
     @property
     def vericto_guard(self) -> Vericto:
+        """The :class:`~vericto.Vericto` that checks this database's queries."""
         return self._vericto_guard
 
     @property
     def vericto_dialect(self) -> str:
+        """The Vericto dialect the queries are evaluated as."""
         return self._vericto_dialect
 
     @property
     def on_block(self) -> str:
+        """``"return"`` (a blocked query returns an explanation) or ``"raise"``."""
         return self._vericto_on_block
 
     def run_sql(self, command: str) -> Tuple[str, Dict[Any, Any]]:

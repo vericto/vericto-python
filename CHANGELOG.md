@@ -6,6 +6,60 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-23
+
+Documentation release, with one small fix. No other behavior change.
+
+### Fixed
+
+- An empty or whitespace-only `VERICTO_FAIL_MODE` now counts as unset and means
+  the documented default, `closed`. 0.4.0 raised `VerictoConfigError` for
+  `VERICTO_FAIL_MODE=` (for example a CI variable that expands to nothing), as
+  vericto-node did before its 0.2.2; every other `VERICTO_*` variable already
+  fell back to its default. An invalid non-empty value still raises, and the
+  error now names `VERICTO_FAIL_MODE` when the value came from it.
+
+### Added
+
+- **Framework guides** in `docs/frameworks/`, each with a runnable example and
+  the versions it was tested with: LangChain (incl. LangChain 1.x
+  `create_agent`), LlamaIndex, SQLAlchemy and any DB-API driver (official
+  integrations), and Django, CrewAI, the OpenAI Agents SDK, Pydantic AI and
+  Vanna 2.x (patterns: these frameworks have no vericto module; the guide shows
+  where to call the guard).
+- `scripts/docs_stub.py`, a local stand-in for the Runtime API with the
+  service's status codes and response bodies, and `scripts/check_docs.py`,
+  which runs every `python` block of the README and the guides against it. New
+  CI job `Docs examples (...)`: the core examples in the dev environment, each
+  framework guide against its pins in `ci/requirements-docs-*.txt`.
+
+### Changed
+
+- README: a **Core API** section (`check`, `enforce`, `prepare`, `enforce_all`,
+  `require_dialect`, the `Verdict` fields), **Timeouts and retries** (the
+  timeout is per attempt; the worst case before `VerictoUnavailable` is about
+  `(max_retries + 1) × timeout` plus backoff, ~15.6 s with the defaults), **Sync
+  and async** (the API is synchronous; use `asyncio.to_thread` in async code;
+  `instrument()` on an `AsyncEngine` blocks the loop while it checks), a
+  runnable fail-closed / fail-open example, and a **Frameworks** table that says
+  which integrations are official and which are patterns. Corrected: the CA
+  bundle is an argument of `RuntimeApiEvaluator`, not of `Vericto`. The Spanish
+  section is updated to match.
+- Docstrings for the public API that had none (`Verdict` fields,
+  `Verdict.blocked`, `Vericto.clear_cache`, `RuntimeApiEvaluator.evaluate` and
+  `close`, the DB-API, sqlite3 and Snowflake wrappers' entry points, the
+  LangChain and LlamaIndex properties).
+- The sdist ships `docs/` and `scripts/` and no longer lists a `README.es.md`
+  that does not exist.
+- Dev lock (`uv.lock`) refreshed with compatible updates (SQLAlchemy 2.1.6,
+  langchain-core 1.7.0, coverage 7.17.0, ruff 0.17.2, among others). The tests
+  now run against snowflake-connector-python 5.1.0 on Python 3.11+ (within the
+  `snowflake` extra's `>=3.0`; 4.8.0 stays on 3.10, which 5.x does not support),
+  which also drops filelock 3.32.7 (CVE-2026-112907, -112913, -112940) from the
+  3.11+ environments; `vericto.snowflake` works unchanged with both (its import
+  of the connector's splitter only gained a type-checker annotation). CI pins
+  langchain-core 1.7.0, SQLAlchemy 2.1.6 and coverage 7.17.0.
+
 ## [0.4.0] - 2026-10-18
 
 **Now open source under the Apache License 2.0.** From this version on,
@@ -251,6 +305,8 @@ the Vericto Runtime API (`POST /api/v1/proxy/query`).
 - The Vericto engine does not evaluate the `sqlite` dialect yet: the SQLite
   wrappers raise `VerictoUnsupportedDialect` until the server lists it.
 
+[0.4.1]: https://github.com/vericto/vericto-python/releases/tag/v0.4.1
+[0.4.0]: https://github.com/vericto/vericto-python/releases/tag/v0.4.0
 [0.3.2]: https://github.com/vericto/vericto-python/releases/tag/v0.3.2
 [0.3.1]: https://github.com/vericto/vericto-python/releases/tag/v0.3.1
 [0.3.0]: https://github.com/vericto/vericto-python/releases/tag/v0.3.0

@@ -140,6 +140,20 @@ class RuntimeApiEvaluator:
     # -- evaluation ---------------------------------------------------------------
 
     def evaluate(self, sql: str, dialect: str) -> Verdict:
+        """Ask the Runtime API for the verdict on one statement.
+
+        Returns the verdict for every answer the server gives, ``BLOCKED`` (HTTP 403)
+        included: applying it is the guard's job. Retries connection errors, timeouts,
+        HTTP 5xx and 429 ``RATE_LIMIT_EXCEEDED`` (``max_retries``, each attempt bounded
+        by ``timeout``).
+
+        Raises:
+            VerictoQuotaExceeded: the monthly quota is used up (not retried).
+            VerictoUnavailable: no verdict after the retries.
+            VerictoConfigError: 401, 403 without a decision, 400 and other client
+                errors (:class:`~vericto.VerictoUnsupportedDialect` for a dialect the
+                server does not list). Never retried.
+        """
         payload = json.dumps({"query": sql, "database_id": self.database_id, "dialect": dialect}).encode("utf-8")
         headers = dict(self._headers)
         headers["X-API-Key"] = self._api_key
@@ -261,6 +275,7 @@ class RuntimeApiEvaluator:
             return ids
 
     def close(self) -> None:
+        """Close the pooled HTTP connections. The evaluator reconnects if used again."""
         self._http.clear()
 
 

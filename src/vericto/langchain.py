@@ -114,14 +114,17 @@ class VerictoSQLDatabase(SQLDatabase):
 
     @property
     def vericto_guard(self) -> Vericto:
+        """The :class:`~vericto.Vericto` that checks this database's queries."""
         return self._vericto_guard
 
     @property
     def vericto_dialect(self) -> str:
+        """The Vericto dialect the queries are evaluated as."""
         return self._vericto_dialect
 
     @property
     def on_block(self) -> str:
+        """``"return"`` (a blocked query returns an explanation) or ``"raise"``."""
         return self._vericto_on_block
 
     def _execute(
@@ -217,6 +220,7 @@ class VerictoCheckSQLTool(BaseTool):
         self.dialect = self.guard.require_dialect(self.dialect)
 
     def check(self, query: str) -> Verdict:
+        """The verdict for ``query`` (nothing runs); ``UNEVALUATED`` under fail-open."""
         if self.guard is None or self.dialect is None:  # set in model_post_init
             raise RuntimeError("VerictoCheckSQLTool is not initialised")
         try:

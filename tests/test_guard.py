@@ -143,6 +143,22 @@ def test_fail_mode_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         Vericto(StubEvaluator(), fail_mode="maybe")
 
 
+@pytest.mark.parametrize("value", ["", "   ", "\t"])
+def test_empty_fail_mode_env_means_the_default(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    # 0.4.0 raised VerictoConfigError for VERICTO_FAIL_MODE= (a CI variable that expands to nothing).
+    monkeypatch.setenv("VERICTO_FAIL_MODE", value)
+    assert Vericto(StubEvaluator()).fail_mode == "closed"
+    assert Vericto(StubEvaluator(), fail_mode="open").fail_mode == "open"
+
+
+def test_invalid_fail_mode_names_its_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VERICTO_FAIL_MODE", "maybe")
+    with pytest.raises(VerictoConfigError, match=r"^VERICTO_FAIL_MODE must be"):
+        Vericto(StubEvaluator())
+    with pytest.raises(VerictoConfigError, match=r"^fail_mode must be"):
+        Vericto(StubEvaluator(), fail_mode=" ")
+
+
 def test_unsupported_dialect_is_refused_before_evaluating() -> None:
     stub = StubEvaluator()
     stub.dialects = ("postgres",)

@@ -26,7 +26,9 @@ class Evaluator(Protocol):
     :class:`~vericto.VerictoConfigError` when the request can never succeed.
     """
 
-    def evaluate(self, sql: str, dialect: str) -> Verdict: ...
+    def evaluate(self, sql: str, dialect: str) -> Verdict:
+        """The verdict for ``sql`` in ``dialect`` (a normalized Vericto dialect id)."""
+        ...
 
     def supported_dialects(self) -> Optional[Sequence[str]]:
         """The dialects this evaluator handles, or ``None`` when it cannot tell."""

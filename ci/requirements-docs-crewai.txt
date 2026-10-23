@@ -1,0 +1,2 @@
+# Pinned versions the docs/frameworks/crewai.md examples are tested with (CI "Docs examples" job).
+crewai==1.15.29

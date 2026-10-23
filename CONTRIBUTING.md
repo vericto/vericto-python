@@ -61,8 +61,11 @@ the README, "Live tests").
    uv run mypy
    uv run coverage run -m pytest
    uv run coverage report --omit="*/vericto/langchain.py,*/vericto/llamaindex.py,*/vericto/airflow/*"
+   uv run python scripts/check_docs.py --strict README.md docs/frameworks/dbapi.md docs/frameworks/sqlalchemy.md
    uv build
    ```
+   A change to a framework guide: run it against its pins too (README,
+   "Documentation examples").
 4. Open a PR using the template. Keep PRs focused and under ~500 lines.
 
 ### Coverage
@@ -76,7 +79,7 @@ gates its own module. To run one locally (LangChain here):
 
 ```bash
 uv venv /tmp/vericto-lc && uv pip install --python /tmp/vericto-lc -e . -r ci/requirements-langchain.txt
-uv pip install --python /tmp/vericto-lc coverage==7.16.2
+uv pip install --python /tmp/vericto-lc coverage==7.17.0
 /tmp/vericto-lc/bin/python -m coverage run -m pytest tests/test_langchain.py
 /tmp/vericto-lc/bin/python -m coverage report --include=src/vericto/langchain.py
 ```
@@ -112,8 +115,10 @@ when they cut a release.
 
 - ✅ Required checks pass: `Lint and type-check`, `Test (Python 3.10)`,
   `Test (Python 3.12)`, `Test (Python 3.14)`, `Build sdist and wheel` and
-  `gitleaks`. The `Integration (...)` jobs run on every pull request too and
-  should be green.
+  `gitleaks`. The `Integration (...)` and `Docs examples (...)` jobs run on
+  every pull request too and should be green.
+- ✅ Code in the README and `docs/frameworks/` runs (`scripts/check_docs.py`), or
+  is marked `<!-- docs-check: skip REASON -->` with a reason.
 - ✅ Coverage stays at or above 80% in every job.
 - ✅ New behavior has tests, including the failure path (`fail_mode`, API errors).
 - ✅ `CHANGELOG.md` updated under `[Unreleased]` when a user can see the change.
