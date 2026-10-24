@@ -1,0 +1,2 @@
+# Pinned versions the docs/frameworks/openai-agents.md examples are tested with (CI "Docs examples" job).
+openai-agents==0.24.0

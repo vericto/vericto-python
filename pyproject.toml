@@ -74,7 +74,7 @@ dev = [
 path = "src/vericto/_version.py"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/vericto", "tests", "examples", "README.md", "README.es.md", "CHANGELOG.md", "LICENSE", "NOTICE", "TRADEMARKS.md", "SECURITY.md"]
+include = ["src/vericto", "tests", "examples", "docs", "scripts", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE", "TRADEMARKS.md", "SECURITY.md"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vericto"]
@@ -116,7 +116,7 @@ ignore = [
 [tool.mypy]
 python_version = "3.10"
 strict = true
-files = ["src/vericto", "tests", "examples"]
+files = ["src/vericto", "tests", "examples", "scripts"]
 
 [[tool.mypy.overrides]]
 module = ["snowflake.*", "pytest_httpserver.*", "werkzeug.*"]

@@ -24,9 +24,17 @@ class Evaluator(Protocol):
     included: blocking is the guard's job, not the evaluator's), raise
     :class:`~vericto.VerictoUnavailable` when no verdict can be produced, and
     :class:`~vericto.VerictoConfigError` when the request can never succeed.
+
+    When the caller gives ``context`` or ``end_user`` (see
+    :mod:`vericto.policy_context`), the guard passes them as keyword arguments of the
+    same names: ``evaluate(sql, dialect, context=..., end_user=...)``. Without them it
+    calls ``evaluate(sql, dialect)``, so an evaluator that does not take them keeps
+    working for every other call.
     """
 
-    def evaluate(self, sql: str, dialect: str) -> Verdict: ...
+    def evaluate(self, sql: str, dialect: str) -> Verdict:
+        """The verdict for ``sql`` in ``dialect`` (a normalized Vericto dialect id)."""
+        ...
 
     def supported_dialects(self) -> Optional[Sequence[str]]:
         """The dialects this evaluator handles, or ``None`` when it cannot tell."""

@@ -24,7 +24,7 @@ from sqlalchemy.engine import Engine
 
 import vericto.sqlalchemy
 from tests.conftest import FakeVericto, blocked, masked
-from vericto import Vericto, VerictoBlocked, VerictoUnavailable
+from vericto import Vericto, VerictoBlocked, VerictoConfigError, VerictoFailOpenWarning, VerictoUnavailable
 from vericto.llamaindex import VerictoSQLDatabase
 
 
@@ -208,3 +208,24 @@ def test_dialect_override_is_refused_when_the_server_lacks_it(
     fake.dialects = ["postgres"]
     with pytest.raises(VerictoUnsupportedDialect):
         VerictoSQLDatabase(engine, guard=guard, dialect="sqlite")
+
+
+# -- 0.5.0: the fail-mode contract and the declared context ------------------------------
+
+
+def test_fail_open_runs_unevaluated(fake: FakeVericto, evaluator: Any, engine: Engine) -> None:
+    fake.on(lambda sql: True, {"status": 503, "body": {}})
+    db = VerictoSQLDatabase(engine, guard=Vericto(evaluator, fail_mode="open"))
+    with pytest.warns(VerictoFailOpenWarning, match="HTTP 503"):
+        text_out, _meta = db.run_sql("SELECT count(*) FROM users")
+    assert "2" in text_out
+
+
+def test_context_and_end_user_go_with_every_statement(fake: FakeVericto, guard: Vericto, engine: Engine) -> None:
+    db = VerictoSQLDatabase(engine, guard=guard, context=lambda: {"tenant": "acme"}, end_user={"id": "u_1"})
+    db.run_sql("SELECT 1")
+    db.insert_into_table("users", {"id": 9, "email": "z@example.com"})
+    assert [r["context"] for r in fake.requests] == [{"tenant": "acme"}] * 2
+    assert [r["end_user"] for r in fake.requests] == [{"id": "u_1"}] * 2
+    with pytest.raises(VerictoConfigError, match="context"):
+        VerictoSQLDatabase(engine, guard=guard, context={"user": "x"})

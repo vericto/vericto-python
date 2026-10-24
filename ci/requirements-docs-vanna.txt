@@ -1,0 +1,2 @@
+# Pinned versions the docs/frameworks/vanna.md examples are tested with (CI "Docs examples" job).
+vanna==2.0.2

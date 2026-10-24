@@ -130,7 +130,7 @@ jobs:
         run: |
           export AIRFLOW_HOME="$RUNNER_TEMP/airflow-home"
           # Line and branch coverage of this job's integration module; fails under 80% (pyproject.toml).
-          uv pip install --python "$RUNNER_TEMP/extra/bin/python" coverage==7.16.2
+          uv pip install --python "$RUNNER_TEMP/extra/bin/python" coverage==7.17.0
           "$RUNNER_TEMP/extra/bin/python" -m coverage run -m pytest $TESTS
           "$RUNNER_TEMP/extra/bin/python" -m coverage report --include="$COVERS"
       - name: Type-check against the real framework
@@ -139,8 +139,43 @@ jobs:
           PYTHON_VERSION: ${{ matrix.python }}
           TYPECHECK: ${{ matrix.typecheck }}
         run: |
-          uv pip install --python "$RUNNER_TEMP/extra/bin/python" mypy==1.19.1
+          uv pip install --python "$RUNNER_TEMP/extra/bin/python" mypy==1.20.2
           "$RUNNER_TEMP/extra/bin/python" -m mypy --python-version "$PYTHON_VERSION" --follow-imports=silent $TYPECHECK
+
+  docs:
+    # Every python block of the README and docs/frameworks/*.md runs against a local
+    # stand-in for the Runtime API (scripts/check_docs.py, scripts/docs_stub.py), with
+    # scripted models: no key, no network beyond the package index. "core" runs in the
+    # dev environment; each framework guide runs against its pinned versions
+    # (ci/requirements-docs-*.txt), with --strict so a missing framework fails.
+    name: Docs examples (${{ matrix.guide }})
+    runs-on: ${{ github.event.repository.private && fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","x64","vericto-spot"]') || fromJSON(vars.CI_RUNS_ON_PUBLIC || '"ubuntu-latest"') }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        guide: [core, langchain, llamaindex, django, crewai, openai-agents, pydantic-ai, vanna]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.13"
+      - name: README, DB-API and SQLAlchemy guides (dev environment)
+        if: matrix.guide == 'core'
+        run: |
+          uv sync --locked
+          uv run python scripts/check_docs.py --strict README.md docs/frameworks/dbapi.md docs/frameworks/sqlalchemy.md
+      - name: Framework guide against its pinned versions
+        if: matrix.guide != 'core'
+        env:
+          GUIDE: ${{ matrix.guide }}
+        run: |
+          uv venv --python 3.13 "$RUNNER_TEMP/docs"
+          uv pip install --python "$RUNNER_TEMP/docs/bin/python" -e . -r "ci/requirements-docs-$GUIDE.txt"
+          "$RUNNER_TEMP/docs/bin/python" scripts/check_docs.py --strict "docs/frameworks/$GUIDE.md"
 
   build:
     name: Build sdist and wheel

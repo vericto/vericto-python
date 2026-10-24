@@ -1,0 +1,2 @@
+# Pinned versions the docs/frameworks/pydantic-ai.md examples are tested with (CI "Docs examples" job).
+pydantic-ai-slim==2.60.0

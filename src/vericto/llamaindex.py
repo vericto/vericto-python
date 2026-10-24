@@ -25,8 +25,12 @@
   ``NLSQLRetriever(handle_sql_errors=False)`` lets it propagate.)
 * masked columns: the masked rewrite runs, never the original.
 * ``FLAGGED`` / ``MONITORED``: runs, and is logged / passed to ``on_verdict``.
-* Vericto unavailable or misconfigured: raised (``fail_mode="open"`` runs the
-  statement unevaluated instead).
+* Vericto unavailable: raised under ``fail_mode="closed"`` (the default);
+  ``fail_mode="open"`` runs the statement unevaluated. A configuration error is
+  raised in both modes.
+
+``context`` and ``end_user`` (a value, or a callable read per statement) go with
+every evaluation, as in :class:`vericto.langchain.VerictoSQLDatabase`.
 
 Requires the ``llamaindex`` extra: ``pip install "vericto[llamaindex]"``.
 """
@@ -39,11 +43,12 @@ from llama_index.core import SQLDatabase
 from sqlalchemy.engine import Engine
 
 from . import sqlalchemy as _vericto_sqlalchemy
-from ._agent import EngineGate, block_message, check_on_block
+from ._agent import EngineGate, block_message, check_on_block, check_sources
 from .dbapi import _default_guard
 from .dialects import normalize_dialect
 from .errors import VerictoBlocked
 from .guard import Vericto
+from .policy_context import ContextSource, EndUserSource
 
 OnBlock = Literal["return", "raise"]
 
@@ -52,7 +57,7 @@ class VerictoSQLDatabase(SQLDatabase):
     """A LlamaIndex ``SQLDatabase`` whose queries are checked by Vericto.
 
     Takes every ``SQLDatabase`` argument (and ``from_uri`` works unchanged), plus
-    ``guard``, ``dialect`` and ``on_block`` as in
+    ``guard``, ``dialect``, ``on_block``, ``context`` and ``end_user`` as in
     :class:`vericto.langchain.VerictoSQLDatabase`. Schema reflection is not sent to
     Vericto; an engine already instrumented with :func:`vericto.sqlalchemy.instrument`
     is not checked twice.
@@ -65,27 +70,38 @@ class VerictoSQLDatabase(SQLDatabase):
         guard: Optional[Vericto] = None,
         dialect: Optional[str] = None,
         on_block: OnBlock = "return",
+        context: ContextSource = None,
+        end_user: EndUserSource = None,
         **kwargs: Any,
     ) -> None:
         self._vericto_on_block = check_on_block(on_block)
+        check_sources(context, end_user)
         g = _default_guard(guard)
         self._vericto_guard = g
         self._vericto_dialect = g.require_dialect(normalize_dialect(dialect or engine.dialect.name))
         super().__init__(engine, *args, **kwargs)
         self._vericto_gate = EngineGate(
-            engine, g, self._vericto_dialect, passthrough=_vericto_sqlalchemy.is_instrumented(engine)
+            engine,
+            g,
+            self._vericto_dialect,
+            passthrough=_vericto_sqlalchemy.is_instrumented(engine),
+            context=context,
+            end_user=end_user,
         )
 
     @property
     def vericto_guard(self) -> Vericto:
+        """The :class:`~vericto.Vericto` that checks this database's queries."""
         return self._vericto_guard
 
     @property
     def vericto_dialect(self) -> str:
+        """The Vericto dialect the queries are evaluated as."""
         return self._vericto_dialect
 
     @property
     def on_block(self) -> str:
+        """``"return"`` (a blocked query returns an explanation) or ``"raise"``."""
         return self._vericto_on_block
 
     def run_sql(self, command: str) -> Tuple[str, Dict[Any, Any]]:

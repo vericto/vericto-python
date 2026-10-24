@@ -1,8 +1,8 @@
 # Pinned versions the LangChain integration is tested with (CI "extras" job).
 langchain-community==0.4.2
-langchain-core==1.6.10
+langchain-core==1.7.0
 langchain-classic==1.0.8
-sqlalchemy==2.1.4
+sqlalchemy==2.1.6
 pytest==9.1.1
 pytest-httpserver==1.2.0
 werkzeug==3.1.9

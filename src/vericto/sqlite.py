@@ -50,16 +50,19 @@ class VerictoSQLiteCursor(sqlite3.Cursor):
     """A ``sqlite3.Cursor`` whose SQL is checked by Vericto."""
 
     def execute(self, sql: str, parameters: Any = (), /) -> VerictoSQLiteCursor:
+        """Check ``sql`` with Vericto, then run it (or its masked rewrite). Raises on a block."""
         final = _guard_of(self.connection).prepare(sql, DIALECT)
         super().execute(final, parameters)
         return self
 
     def executemany(self, sql: str, seq_of_parameters: Iterable[Any], /) -> VerictoSQLiteCursor:
+        """:meth:`execute` for many parameter sets: one check for the statement."""
         final = _guard_of(self.connection).prepare(sql, DIALECT)
         super().executemany(final, seq_of_parameters)
         return self
 
     def executescript(self, sql_script: str, /) -> VerictoSQLiteCursor:
+        """Evaluate every statement of the script, then run it; a block anywhere runs none of it."""
         final = guard_script(_guard_of(self.connection), sql_script)
         super().executescript(final)
         return self
@@ -71,6 +74,7 @@ class VerictoSQLiteConnection(sqlite3.Connection):
     _vericto_guard: Optional[Vericto] = None
 
     def cursor(self, factory: Any = None) -> VerictoSQLiteCursor:  # type: ignore[override]
+        """A checked cursor. A custom ``factory`` must subclass :class:`VerictoSQLiteCursor`."""
         if factory is None:
             factory = VerictoSQLiteCursor
         elif not (isinstance(factory, type) and issubclass(factory, VerictoSQLiteCursor)):
@@ -79,12 +83,15 @@ class VerictoSQLiteConnection(sqlite3.Connection):
         return cursor
 
     def execute(self, sql: str, parameters: Any = (), /) -> VerictoSQLiteCursor:
+        """``cursor().execute(...)``, checked."""
         return self.cursor().execute(sql, parameters)
 
     def executemany(self, sql: str, seq_of_parameters: Iterable[Any], /) -> VerictoSQLiteCursor:
+        """``cursor().executemany(...)``, checked."""
         return self.cursor().executemany(sql, seq_of_parameters)
 
     def executescript(self, sql_script: str, /) -> VerictoSQLiteCursor:
+        """``cursor().executescript(...)``, checked whole before it runs."""
         return self.cursor().executescript(sql_script)
 
 

@@ -31,6 +31,7 @@ from .errors import (
 from .evaluator import Evaluator
 from .guard import Vericto
 from .placeholders import PlaceholderMappingError
+from .policy_context import EndUser, PolicyContext
 from .runtime_api import DEFAULT_API_URL, RuntimeApiEvaluator
 from .verdict import Decision, Finding, Verdict
 
@@ -38,9 +39,11 @@ __all__ = [
     "DEFAULT_API_URL",
     "KNOWN_DIALECTS",
     "Decision",
+    "EndUser",
     "Evaluator",
     "Finding",
     "PlaceholderMappingError",
+    "PolicyContext",
     "RuntimeApiEvaluator",
     "Verdict",
     "Vericto",

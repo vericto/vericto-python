@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -12,7 +13,7 @@ import time
 import warnings
 from collections import OrderedDict
 from dataclasses import replace
-from typing import Any, Callable, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, cast
 
 from .dialects import normalize_dialect
 from .errors import (
@@ -25,6 +26,7 @@ from .errors import (
 )
 from .evaluator import Evaluator
 from .placeholders import from_evaluation_text, to_evaluation_text
+from .policy_context import policy_fields
 from .runtime_api import DEFAULT_MAX_RETRIES, RuntimeApiEvaluator
 from .verdict import Decision, Verdict
 
@@ -49,9 +51,11 @@ class Vericto:
         api_key, database_id, api_url, timeout, max_retries: passed to the default
             evaluator.
         fail_mode: ``"closed"`` (default, or ``VERICTO_FAIL_MODE``): when Vericto cannot
-            answer, raise :class:`~vericto.VerictoUnavailable` and do not run the
-            statement. ``"open"``: run it unevaluated and emit a
-            :class:`~vericto.VerictoFailOpenWarning`.
+            answer, raise :class:`~vericto.VerictoUnavailable` (from :meth:`check`,
+            :meth:`enforce` and every wrapper) and do not run the statement.
+            ``"open"``: never raise for it; :meth:`check` returns an ``UNEVALUATED``
+            verdict with the reason, and :meth:`enforce` also lets the statement run
+            unevaluated and emits a :class:`~vericto.VerictoFailOpenWarning`.
         cache_ttl: seconds to reuse a verdict for the same ``(sql, dialect)``. ``0``
             (default) disables the cache; see the README before enabling it.
         cache_size: maximum number of cached verdicts.
@@ -82,9 +86,12 @@ class Vericto:
             )
         self.evaluator = evaluator
 
-        mode = (fail_mode if fail_mode is not None else os.environ.get("VERICTO_FAIL_MODE", "closed")).strip().lower()
+        # An empty or whitespace-only VERICTO_FAIL_MODE is unset: the default, closed.
+        from_env = os.environ.get("VERICTO_FAIL_MODE", "").strip()
+        source = "fail_mode" if fail_mode is not None or not from_env else "VERICTO_FAIL_MODE"
+        mode = (fail_mode if fail_mode is not None else (from_env or "closed")).strip().lower()
         if mode not in FAIL_MODES:
-            raise VerictoConfigError(f"fail_mode must be 'closed' or 'open', got {mode!r}.")
+            raise VerictoConfigError(f"{source} must be 'closed' or 'open', got {mode!r}.")
         self.fail_mode = mode
         if cache_ttl < 0 or cache_size < 1:
             raise VerictoConfigError("cache_ttl must be >= 0 and cache_size >= 1.")
@@ -118,32 +125,55 @@ class Vericto:
 
     # -- evaluation ---------------------------------------------------------------
 
-    def check(self, sql: str, dialect: str) -> Verdict:
-        """Evaluate ``sql`` and return the verdict, whatever it is.
+    def check(
+        self,
+        sql: str,
+        dialect: str,
+        *,
+        context: Optional[Mapping[str, Any]] = None,
+        end_user: Optional[Mapping[str, Any]] = None,
+    ) -> Verdict:
+        """Evaluate ``sql`` and return the verdict, whatever it is: use it to ask, and
+        :meth:`enforce` to guard an execution.
 
-        Does not apply the fail mode and does not raise on ``BLOCKED``: use it to ask,
-        and :meth:`enforce` to guard an execution. Raises
-        :class:`~vericto.VerictoUnavailable` or :class:`~vericto.VerictoConfigError`.
+        Does not raise on ``BLOCKED`` (the verdict says so). When Vericto cannot answer,
+        the fail mode applies, as in :meth:`enforce`: ``"closed"`` raises
+        :class:`~vericto.VerictoUnavailable`; ``"open"`` returns an ``UNEVALUATED``
+        verdict whose ``message`` is the reason, and logs a warning.
+        :class:`~vericto.VerictoConfigError` is raised in both modes.
+
+        ``context`` (``{"ticket": ..., "tenant": ...}``) and ``end_user`` (up to 16
+        attributes of the end user your service acts for) are sent with the request
+        and checked first with the server's limits (:mod:`vericto.policy_context`).
+        They take effect when business policies are enabled in your workspace.
         """
         if not isinstance(sql, str):
             raise TypeError(f"vericto: expected the SQL text as str, got {type(sql).__name__}.")
-        name = self.require_dialect(dialect)
-        if self._cache is not None:
-            hit = self._cache.get(sql, name)
-            if hit is not None:
-                return hit
-        verdict = self.evaluator.evaluate(sql, name)
-        if self._cache is not None and verdict.decision is not Decision.UNEVALUATED:
-            self._cache.put(verdict)
-        return verdict
+        fields = policy_fields(context, end_user)
+        try:
+            return self._evaluate(sql, dialect, fields)
+        except VerictoUnavailable as exc:
+            if self.fail_mode == "closed":
+                raise
+            logger.warning("vericto: no verdict, check answered UNEVALUATED (fail_mode=open): %s", exc)
+            return Verdict.unevaluated(sql, normalize_dialect(dialect), str(exc))
 
-    def enforce(self, sql: str, dialect: str, *, paramstyle: Optional[str] = None) -> Verdict:
+    def enforce(
+        self,
+        sql: str,
+        dialect: str,
+        *,
+        paramstyle: Optional[str] = None,
+        context: Optional[Mapping[str, Any]] = None,
+        end_user: Optional[Mapping[str, Any]] = None,
+    ) -> Verdict:
         """Evaluate ``sql`` and apply the decision.
 
         ``paramstyle`` is the driver's DB-API paramstyle, given only when the statement
         is executed with parameters: ``format``/``pyformat`` markers (``%s``,
         ``%(name)s``) are then evaluated as the dialect's own placeholders (see
-        :mod:`vericto.placeholders`). Values are never sent.
+        :mod:`vericto.placeholders`). Values are never sent. ``context`` and
+        ``end_user`` are sent as in :meth:`check`.
 
         * ``BLOCKED``: raises :class:`~vericto.VerictoBlocked`.
         * ``FLAGGED``, ``MONITORED``, ``PARSE_ERROR`` (allowed by the workspace
@@ -156,10 +186,11 @@ class Vericto:
         """
         if not isinstance(sql, str):
             raise TypeError(f"vericto: expected the SQL text as str, got {type(sql).__name__}.")
+        fields = policy_fields(context, end_user)
         name = normalize_dialect(dialect)
         evaluation_sql, mapping = to_evaluation_text(sql, name, paramstyle)
         try:
-            verdict = self.check(evaluation_sql, name)
+            verdict = self._evaluate(evaluation_sql, name, fields)
         except VerictoUnavailable as exc:
             if self.fail_mode == "closed":
                 logger.error("vericto: no verdict, statement not executed (fail_mode=closed): %s", exc)
@@ -193,23 +224,57 @@ class Vericto:
             )
         return verdict
 
-    def prepare(self, sql: str, dialect: str, *, paramstyle: Optional[str] = None) -> str:
+    def prepare(
+        self,
+        sql: str,
+        dialect: str,
+        *,
+        paramstyle: Optional[str] = None,
+        context: Optional[Mapping[str, Any]] = None,
+        end_user: Optional[Mapping[str, Any]] = None,
+    ) -> str:
         """:meth:`enforce` and return the SQL text to execute."""
-        return self.enforce(sql, dialect, paramstyle=paramstyle).sql_to_execute
+        return self.enforce(sql, dialect, paramstyle=paramstyle, context=context, end_user=end_user).sql_to_execute
 
-    def enforce_all(self, statements: Iterable[str], dialect: str) -> List[Verdict]:
+    def enforce_all(
+        self,
+        statements: Iterable[str],
+        dialect: str,
+        *,
+        context: Optional[Mapping[str, Any]] = None,
+        end_user: Optional[Mapping[str, Any]] = None,
+    ) -> List[Verdict]:
         """Enforce a batch: every statement is evaluated before any of them runs.
 
         A block anywhere raises before the first statement executes, so a script never
         stops half-applied because of Vericto.
         """
-        return [self.enforce(statement, dialect) for statement in statements]
+        return [self.enforce(statement, dialect, context=context, end_user=end_user) for statement in statements]
 
     def clear_cache(self) -> None:
+        """Drop every cached verdict (a no-op when the cache is off)."""
         if self._cache is not None:
             self._cache.clear()
 
     # -- internals ----------------------------------------------------------------
+
+    def _evaluate(self, sql: str, dialect: str, fields: Dict[str, Any]) -> Verdict:
+        """One evaluation through the cache; raises what the evaluator raises."""
+        name = self.require_dialect(dialect)
+        # A verdict depends on the declared context too: it is part of the cache key.
+        scope = json.dumps(fields, sort_keys=True) if fields else ""
+        if self._cache is not None:
+            hit = self._cache.get(sql, name, scope)
+            if hit is not None:
+                return hit
+        if fields:
+            # Passed only when given, so an evaluator written for evaluate(sql, dialect) keeps working.
+            verdict = cast(Any, self.evaluator).evaluate(sql, name, **fields)
+        else:
+            verdict = self.evaluator.evaluate(sql, name)
+        if self._cache is not None and verdict.decision is not Decision.UNEVALUATED:
+            self._cache.put(verdict, scope)
+        return cast(Verdict, verdict)
 
     def _notify(self, verdict: Verdict) -> None:
         if self.on_verdict is None:
@@ -238,7 +303,8 @@ class Vericto:
 class _VerdictCache:
     """Small thread-safe TTL + LRU cache of server verdicts.
 
-    Keyed by ``(sql, dialect)``; the evaluator already binds the database. When a
+    Keyed by ``(sql, dialect, scope)``, ``scope`` being the declared ``context`` and
+    ``end_user``; the evaluator already binds the database. When a
     response carries a ``ruleset_version`` different from the one the cache was
     filled under, every entry is dropped.
     """
@@ -247,11 +313,11 @@ class _VerdictCache:
         self._ttl = ttl
         self._size = size
         self._lock = threading.Lock()
-        self._items: OrderedDict[tuple[str, str], tuple[float, Verdict]] = OrderedDict()
+        self._items: OrderedDict[tuple[str, str, str], tuple[float, Verdict]] = OrderedDict()
         self._ruleset: Optional[str] = None
 
-    def get(self, sql: str, dialect: str) -> Optional[Verdict]:
-        key = (sql, dialect)
+    def get(self, sql: str, dialect: str, scope: str = "") -> Optional[Verdict]:
+        key = (sql, dialect, scope)
         with self._lock:
             item = self._items.get(key)
             if item is None:
@@ -263,14 +329,15 @@ class _VerdictCache:
             self._items.move_to_end(key)
         return replace(verdict, cached=True)
 
-    def put(self, verdict: Verdict) -> None:
+    def put(self, verdict: Verdict, scope: str = "") -> None:
+        key = (verdict.sql, verdict.dialect, scope)
         with self._lock:
             if verdict.ruleset_version and verdict.ruleset_version != self._ruleset:
                 if self._ruleset is not None:
                     self._items.clear()
                 self._ruleset = verdict.ruleset_version
-            self._items[(verdict.sql, verdict.dialect)] = (time.monotonic(), verdict)
-            self._items.move_to_end((verdict.sql, verdict.dialect))
+            self._items[key] = (time.monotonic(), verdict)
+            self._items.move_to_end(key)
             while len(self._items) > self._size:
                 self._items.popitem(last=False)
 

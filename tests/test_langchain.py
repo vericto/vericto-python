@@ -5,8 +5,9 @@
 
 from __future__ import annotations
 
+import contextvars
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -21,7 +22,7 @@ from sqlalchemy.engine import Engine
 
 import vericto.sqlalchemy
 from tests.conftest import FakeVericto, blocked, flagged, masked
-from vericto import Vericto, VerictoBlocked, VerictoConfigError, VerictoUnavailable
+from vericto import Vericto, VerictoBlocked, VerictoConfigError, VerictoFailOpenWarning, VerictoUnavailable
 from vericto.langchain import VerictoCheckSQLTool, VerictoSQLDatabase
 
 
@@ -280,3 +281,73 @@ def test_check_tool_prefers_explicit_guard_and_dialect_over_db(
     tool.guard = None
     with pytest.raises(RuntimeError, match="not initialised"):
         tool.check("SELECT 1")
+
+
+# -- 0.5.0: the fail-mode contract and the declared context ------------------------------
+
+_DOWN = {"status": 503, "body": {"error": {"code": "INTERNAL_ERROR"}}}
+
+
+def test_check_tool_fail_open_answers_unevaluated_with_the_reason(fake: FakeVericto, evaluator: Any) -> None:
+    fake.on(lambda sql: True, _DOWN)
+    tool = VerictoCheckSQLTool(guard=Vericto(evaluator, fail_mode="open"), dialect="postgres")
+    verdict = tool.check("SELECT 1")
+    assert verdict.decision.value == "UNEVALUATED" and "HTTP 503" in (verdict.message or "")
+    answer = tool.invoke({"query": "SELECT 1"})
+    assert answer.startswith("UNEVALUATED") and "HTTP 503" in answer
+
+
+def test_query_tools_follow_the_fail_mode(fake: FakeVericto, evaluator: Any, engine: Engine) -> None:
+    fake.on(lambda sql: True, _DOWN)
+    closed = VerictoSQLDatabase(engine, guard=Vericto(evaluator))
+    with pytest.raises(VerictoUnavailable):
+        QuerySQLDatabaseTool(db=closed).invoke({"query": "SELECT id FROM users"})
+    opened = VerictoSQLDatabase(engine, guard=Vericto(evaluator, fail_mode="open"))
+    with pytest.warns(VerictoFailOpenWarning):
+        assert opened.run("SELECT id FROM users ORDER BY id") == "[(1,), (2,)]"
+
+
+def test_context_and_end_user_go_with_every_query(fake: FakeVericto, guard: Vericto, engine: Engine) -> None:
+    db = VerictoSQLDatabase(engine, guard=guard, context={"ticket": "CHG-1"}, end_user={"id": "u_1"})
+    db.run("SELECT id FROM users WHERE id = 1")
+    assert fake.requests[-1]["context"] == {"ticket": "CHG-1"}
+    assert fake.requests[-1]["end_user"] == {"id": "u_1"}
+    VerictoCheckSQLTool(db=db).invoke({"query": "SELECT 2"})
+    assert fake.requests[-1]["context"] == {"ticket": "CHG-1"}
+    assert fake.requests[-1]["end_user"] == {"id": "u_1"}
+    VerictoCheckSQLTool(db=db, context={"tenant": "acme"}).invoke({"query": "SELECT 3"})
+    assert fake.requests[-1]["context"] == {"tenant": "acme"}
+
+
+def test_context_can_be_read_per_query(fake: FakeVericto, guard: Vericto, engine: Engine) -> None:
+    current = contextvars.ContextVar[Optional[Dict[str, str]]]("end_user", default=None)
+    db = VerictoSQLDatabase(engine, guard=guard, end_user=current.get)
+    tool = VerictoCheckSQLTool(guard=guard, dialect="sqlite", end_user=current.get)
+    db.run("SELECT 1")
+    assert "end_user" not in fake.requests[-1]
+    current.set({"id": "u_2"})
+    db.run("SELECT 1")
+    assert fake.requests[-1]["end_user"] == {"id": "u_2"}
+    tool.invoke({"query": "SELECT 1"})
+    assert fake.requests[-1]["end_user"] == {"id": "u_2"}
+
+
+def test_invalid_context_is_refused_at_construction(guard: Vericto, engine: Engine) -> None:
+    with pytest.raises(VerictoConfigError, match=r"context\.ticket"):
+        VerictoSQLDatabase(engine, guard=guard, context={"ticket": ""})
+    with pytest.raises(VerictoConfigError, match="end_user"):
+        VerictoCheckSQLTool(guard=guard, dialect="sqlite", end_user={"bad key": "x"})
+
+
+def test_context_on_an_instrumented_engine_belongs_to_instrument(
+    fake: FakeVericto, guard: Vericto, engine: Engine
+) -> None:
+    undo = vericto.sqlalchemy.instrument(engine, guard=guard, context={"tenant": "acme"})
+    try:
+        with pytest.raises(VerictoConfigError, match="instrument"):
+            VerictoSQLDatabase(engine, guard=guard, context={"tenant": "other"})
+        db = VerictoSQLDatabase(engine, guard=guard)
+        db.run("SELECT 1")
+        assert fake.requests[-1]["context"] == {"tenant": "acme"}
+    finally:
+        undo()

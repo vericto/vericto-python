@@ -1,0 +1,6 @@
+# Pinned versions the docs/frameworks/langchain.md examples are tested with (CI "Docs examples" job).
+langchain-community==0.4.2
+langchain-core==1.7.0
+langchain-classic==1.0.8
+langchain==1.4.7
+sqlalchemy==2.1.6
