@@ -103,5 +103,5 @@ loop is not blocked.
 
 ## Tested with
 
-Python 3.13.12, vericto 0.4.1, Django 6.1.2 (SQLite backend; PostgreSQL 17 with psycopg 3.3.6), against the local
+Python 3.13.12, vericto 0.5.0, Django 6.1.2 (SQLite backend; PostgreSQL 17 with psycopg 3.3.6), against the local
 Runtime API stand-in.

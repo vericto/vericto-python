@@ -46,6 +46,12 @@ The dialect comes from `engine.dialect.name`: `postgresql` → `postgres`,
 and raises `VerictoUnsupportedDialect` before anything runs if it does not list
 this one.
 
+`instrument(engine, context=..., end_user=...)` sends the declared context of the
+evaluation (`{"ticket": ..., "tenant": ...}` and the end user's attributes) with
+every statement: a value, or a callable read per statement. They take effect when
+business policies are enabled in your workspace; see the README's [Business policy
+context](https://github.com/vericto/vericto-python/blob/main/README.md#business-policy-context).
+
 ## Async engines
 
 `instrument()` accepts an `AsyncEngine` (it instruments its `sync_engine`). The
@@ -73,5 +79,5 @@ statement.
 
 ## Tested with
 
-Python 3.13.12, vericto 0.4.1, SQLAlchemy 2.1.6 (SQLite; PostgreSQL 17 with
+Python 3.13.12, vericto 0.5.0, SQLAlchemy 2.1.6 (SQLite; PostgreSQL 17 with
 psycopg 3.3.6), against the local Runtime API stand-in.

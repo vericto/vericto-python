@@ -125,13 +125,15 @@ print(check.invoke("DELETE FROM customers WHERE id = 1"))  # "ALLOWED: ..."
 | `FLAGGED` / `MONITORED` | The rows; the verdict is logged and passed to `on_verdict`. |
 | mask | The rows of the masked rewrite (sample rows in the prompt too), never the real values. |
 | `BLOCKED` | `on_block="return"` (default): `run` / `run_no_throw` / `QuerySQLDatabaseTool` return `Error: Vericto blocked this query (VERICTO-001, severity critical). It was NOT executed.` plus the reason and `Suggested fix: ...`. `on_block="raise"`: `VerictoBlocked` (`run(fetch="cursor")` always raises). |
-| no verdict, configuration error | Raised (`VerictoUnavailable`, `VerictoConfigError`), never handed to the model. `fail_mode="open"` runs the query unevaluated instead. |
+| no verdict | `fail_mode="closed"` (default): `VerictoUnavailable` is raised, never handed to the model. `fail_mode="open"`: the query runs unevaluated (with a `VerictoFailOpenWarning`), and `VerictoCheckSQLTool` answers `UNEVALUATED: Vericto could not evaluate the query (<reason>).` |
+| configuration error | `VerictoConfigError` is raised in both fail modes, never handed to the model. |
 
 - A blocked sample-rows query is left out of the table info instead of failing.
 - `VerictoCheckSQLTool` (`vericto_check_sql`) answers ALLOWED, FLAGGED, the masked
   query that would run, or the block with its fix. Each call is one Runtime API
-  evaluation (quota, audit trail). Under `fail_mode="open"` it answers
-  `UNEVALUATED` when Vericto cannot be reached.
+  evaluation (quota, audit trail). It follows the fail mode as `Vericto.check()`
+  does: under `fail_mode="open"` it answers `UNEVALUATED` with the reason when
+  Vericto cannot answer; under `"closed"` it raises `VerictoUnavailable`.
 - An engine already instrumented with `vericto.sqlalchemy.instrument` is not
   checked twice. Schema reflection is not sent to Vericto.
 - Everything is synchronous: LangChain's async entry points (`ainvoke`) run the
@@ -168,8 +170,51 @@ def run_sql(query: str) -> str:
 print(run_sql.invoke({"query": "DELETE FROM orders"}))
 ```
 
+## Business policy context
+
+`context` (`{"ticket": ..., "tenant": ...}`) and `end_user` (the end user your
+service acts for) go with every evaluation of `VerictoSQLDatabase` and
+`VerictoCheckSQLTool` (which takes those of its `db=` unless you pass its own).
+Give a value, or a callable read for every query, for example the `get` of a
+`contextvars.ContextVar` your request handler sets. Fixed values are checked
+against the server's limits when the object is built; see the README's [Business
+policy
+context](https://github.com/vericto/vericto-python/blob/main/README.md#business-policy-context)
+for the limits.
+
+> **Note:** takes effect when business policies are enabled in your workspace.
+
+<!-- docs-check: requires=langchain_community -->
+```python
+import contextvars
+from typing import Dict, Optional
+
+from sqlalchemy import create_engine
+
+from vericto import Vericto
+from vericto.langchain import VerictoCheckSQLTool, VerictoSQLDatabase
+
+engine = create_engine("sqlite://")
+with engine.begin() as conn:
+    conn.exec_driver_sql("CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT)")
+
+# The end user of the current request, set by your web framework.
+current_user: contextvars.ContextVar[Optional[Dict[str, str]]] = contextvars.ContextVar("user", default=None)
+
+db = VerictoSQLDatabase(engine, guard=Vericto(), context={"tenant": "acme"}, end_user=current_user.get)
+current_user.set({"id": "u_829", "role": "support"})
+print(db.run("SELECT id, status FROM orders WHERE id = 1"))  # sent with context and end_user
+
+# Under fail_mode="open" the check tool reports that there is no verdict.
+offline = Vericto(api_url="http://127.0.0.1:9", max_retries=0, fail_mode="open")
+check = VerictoCheckSQLTool(guard=offline, dialect="sqlite", context={"ticket": "CHG-1042"})
+answer = check.invoke({"query": "DELETE FROM orders"})
+print(answer)  # UNEVALUATED: Vericto could not evaluate the query (...)
+assert answer.startswith("UNEVALUATED")
+```
+
 ## Tested with
 
-Python 3.13.12, vericto 0.4.1, langchain-core 1.7.0, langchain-community 0.4.2,
+Python 3.13.12, vericto 0.5.0, langchain-core 1.7.0, langchain-community 0.4.2,
 langchain-classic 1.0.8, langchain 1.4.7 (langgraph 1.2.16), SQLAlchemy 2.1.6,
 against the local Runtime API stand-in, with scripted models only.

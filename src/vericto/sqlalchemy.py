@@ -32,6 +32,7 @@ from sqlalchemy import event
 from .dbapi import _default_guard
 from .dialects import normalize_dialect
 from .guard import Vericto
+from .policy_context import ContextSource, EndUserSource, policy_fields, resolve
 
 EVENT = "before_cursor_execute"
 
@@ -40,7 +41,14 @@ EVENT = "before_cursor_execute"
 _INSTRUMENTED: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
 
 
-def instrument(engine: Any, *, guard: Optional[Vericto] = None, dialect: Optional[str] = None) -> Callable[[], None]:
+def instrument(
+    engine: Any,
+    *,
+    guard: Optional[Vericto] = None,
+    dialect: Optional[str] = None,
+    context: ContextSource = None,
+    end_user: EndUserSource = None,
+) -> Callable[[], None]:
     """Check every statement ``engine`` executes. Returns a function that undoes it.
 
     Args:
@@ -48,17 +56,26 @@ def instrument(engine: Any, *, guard: Optional[Vericto] = None, dialect: Optiona
         guard: the :class:`~vericto.Vericto` to use; built from the environment
             when omitted.
         dialect: override the dialect read from ``engine.dialect.name``.
+        context, end_user: sent with every evaluation (a value, or a callable read
+            per statement); see :mod:`vericto.policy_context`.
     """
+    policy_fields(None if callable(context) else context, None if callable(end_user) else end_user)
     target = getattr(engine, "sync_engine", engine)
     g = _default_guard(guard)
     name = g.require_dialect(normalize_dialect(dialect or target.dialect.name))
     paramstyle: Optional[str] = getattr(target.dialect, "paramstyle", None)
 
     def before_cursor_execute(
-        conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool
+        conn: Any, cursor: Any, statement: str, parameters: Any, execution_context: Any, executemany: bool
     ) -> tuple[str, Any]:
         has_params = executemany or bool(parameters)
-        final = g.prepare(statement, name, paramstyle=paramstyle if has_params else None)
+        final = g.prepare(
+            statement,
+            name,
+            paramstyle=paramstyle if has_params else None,
+            context=resolve(context),
+            end_user=resolve(end_user),
+        )
         return final, parameters
 
     event.listen(target, EVENT, before_cursor_execute, retval=True)

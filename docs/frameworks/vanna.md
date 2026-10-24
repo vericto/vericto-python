@@ -87,5 +87,5 @@ notice an outage, watch the `vericto` logger (a missing verdict is logged at
 
 ## Tested with
 
-Python 3.13.12, vericto 0.4.1, vanna 2.0.2 (`SqliteRunner`), against the local
+Python 3.13.12, vericto 0.5.0, vanna 2.0.2 (`SqliteRunner`), against the local
 Runtime API stand-in, without an LLM.

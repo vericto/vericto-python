@@ -22,8 +22,15 @@ checked with Vericto first, after SQLAlchemy compiles it:
   :class:`~vericto.VerictoBlocked`.
 * masked columns: the masked rewrite runs, never the original.
 * ``FLAGGED`` / ``MONITORED``: runs, and is logged / passed to ``on_verdict``.
-* Vericto unavailable, or a configuration error: raised, never returned to the
-  model (``fail_mode="open"`` runs the query unevaluated instead).
+* Vericto unavailable: raised under ``fail_mode="closed"`` (the default), never
+  returned to the model; ``fail_mode="open"`` runs the query unevaluated, and
+  :class:`VerictoCheckSQLTool` answers ``UNEVALUATED`` with the reason. A
+  configuration error is raised in both modes.
+
+``context`` (``ticket``, ``tenant``) and ``end_user`` go with every evaluation of
+both classes: a fixed value, or a callable read for each query (for example from a
+``contextvars.ContextVar`` set per request). They take effect when business
+policies are enabled in your workspace (:mod:`vericto.policy_context`).
 
 The sample rows ``get_table_info`` puts in the prompt are checked too (and masked);
 a blocked sample is left out of the table info instead of failing.
@@ -44,11 +51,12 @@ from sqlalchemy.sql.expression import Executable
 from sqlalchemy.sql.schema import Table
 
 from . import sqlalchemy as _vericto_sqlalchemy
-from ._agent import EngineGate, block_message, check_on_block, describe_verdict
+from ._agent import EngineGate, block_message, check_on_block, check_sources, describe_verdict
 from .dbapi import _default_guard
 from .dialects import normalize_dialect
-from .errors import VerictoBlocked, VerictoUnavailable
+from .errors import VerictoBlocked
 from .guard import Vericto
+from .policy_context import ContextSource, EndUserSource, resolve
 from .verdict import Verdict
 
 OnBlock = Literal["return", "raise"]
@@ -84,6 +92,10 @@ class VerictoSQLDatabase(SQLDatabase):
         dialect: the Vericto dialect; read from ``engine.dialect.name`` when omitted.
         on_block: ``"return"`` (default): a blocked query returns an explanation the
             agent can act on. ``"raise"``: it raises :class:`~vericto.VerictoBlocked`.
+        context: ``{"ticket": ..., "tenant": ...}`` sent with every evaluation, or a
+            callable that returns it (read per query).
+        end_user: the end user's attributes sent with every evaluation, or a callable
+            that returns them (read per query).
 
     Schema reflection at construction is not sent to Vericto. If the engine is
     already instrumented with :func:`vericto.sqlalchemy.instrument`, that listener
@@ -97,9 +109,12 @@ class VerictoSQLDatabase(SQLDatabase):
         guard: Optional[Vericto] = None,
         dialect: Optional[str] = None,
         on_block: OnBlock = "return",
+        context: ContextSource = None,
+        end_user: EndUserSource = None,
         **kwargs: Any,
     ) -> None:
         self._vericto_on_block = check_on_block(on_block)
+        check_sources(context, end_user)
         g = _default_guard(guard)
         self._vericto_guard = g
         self._vericto_dialect = g.require_dialect(normalize_dialect(dialect or engine.dialect.name))
@@ -110,6 +125,8 @@ class VerictoSQLDatabase(SQLDatabase):
             self._vericto_dialect,
             internal=_internal_statements(self._schema),
             passthrough=_vericto_sqlalchemy.is_instrumented(engine),
+            context=context,
+            end_user=end_user,
         )
 
     @property
@@ -126,6 +143,16 @@ class VerictoSQLDatabase(SQLDatabase):
     def on_block(self) -> str:
         """``"return"`` (a blocked query returns an explanation) or ``"raise"``."""
         return self._vericto_on_block
+
+    @property
+    def vericto_context(self) -> ContextSource:
+        """The ``context`` sent with every evaluation (a value or a callable)."""
+        return self._vericto_gate.context
+
+    @property
+    def vericto_end_user(self) -> EndUserSource:
+        """The ``end_user`` sent with every evaluation (a value or a callable)."""
+        return self._vericto_gate.end_user
 
     def _execute(
         self,
@@ -187,7 +214,13 @@ class VerictoCheckSQLTool(BaseTool):
     run) or blocked (with the rule and the suggested fix). With ``on_block="raise"``
     a blocked query raises :class:`~vericto.VerictoBlocked` instead.
 
-    Build it from a :class:`VerictoSQLDatabase` (``db=``) or from ``guard`` and
+    When Vericto cannot answer, the guard's fail mode applies as in
+    :meth:`Vericto.check <vericto.Vericto.check>`: ``"closed"`` raises
+    :class:`~vericto.VerictoUnavailable` (never turned into text for the model);
+    ``"open"`` answers ``UNEVALUATED`` with the reason.
+
+    Build it from a :class:`VerictoSQLDatabase` (``db=``, which also gives its
+    ``context`` and ``end_user`` unless you pass them) or from ``guard`` and
     ``dialect``. Each call is one evaluation in your Vericto workspace (Runtime API).
     """
 
@@ -205,14 +238,21 @@ class VerictoCheckSQLTool(BaseTool):
     dialect: Optional[str] = None
     db: Optional[VerictoSQLDatabase] = Field(default=None, exclude=True)
     on_block: OnBlock = "return"
+    context: Any = Field(default=None, exclude=True)
+    end_user: Any = Field(default=None, exclude=True)
 
-    def model_post_init(self, context: Any, /) -> None:
+    def model_post_init(self, __context: Any, /) -> None:
         check_on_block(self.on_block)
         if self.db is not None:
             if self.guard is None:
                 self.guard = self.db.vericto_guard
             if self.dialect is None:
                 self.dialect = self.db.vericto_dialect
+            if self.context is None:
+                self.context = self.db.vericto_context
+            if self.end_user is None:
+                self.end_user = self.db.vericto_end_user
+        check_sources(self.context, self.end_user)
         if self.dialect is None:
             raise ValueError("VerictoCheckSQLTool needs dialect= (or db=VerictoSQLDatabase(...)).")
         if self.guard is None:
@@ -223,12 +263,7 @@ class VerictoCheckSQLTool(BaseTool):
         """The verdict for ``query`` (nothing runs); ``UNEVALUATED`` under fail-open."""
         if self.guard is None or self.dialect is None:  # set in model_post_init
             raise RuntimeError("VerictoCheckSQLTool is not initialised")
-        try:
-            return self.guard.check(query, self.dialect)
-        except VerictoUnavailable as exc:
-            if self.guard.fail_mode == "open":
-                return Verdict.unevaluated(query, self.dialect, str(exc))
-            raise
+        return self.guard.check(query, self.dialect, context=resolve(self.context), end_user=resolve(self.end_user))
 
     def _run(self, query: str, run_manager: Any = None) -> str:
         verdict = self.check(query)

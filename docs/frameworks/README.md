@@ -14,13 +14,13 @@ models, at the versions each guide lists.
 | SQLAlchemy (Core, ORM, `text()`) | Official: `vericto.sqlalchemy` | [sqlalchemy.md](sqlalchemy.md) | SQLAlchemy 2.1.6 |
 | Any DB-API driver (psycopg, PyMySQL, oracledb, pyodbc, sqlite3, Snowflake) | Official: `vericto.wrap`, `vericto.sqlite`, `vericto.snowflake` | [dbapi.md](dbapi.md) | sqlite3, psycopg 3.3.6 |
 | Django | Pattern: `connection.execute_wrapper` | [django.md](django.md) | Django 6.1.2 |
-| CrewAI | Pattern: a guarded `@tool` | [crewai.md](crewai.md) | crewai 1.15.29 |
+| CrewAI | Pattern: a guarded `@tool` | [crewai.md](crewai.md) | crewai 1.15.30 |
 | OpenAI Agents SDK | Pattern: a guarded `function_tool` | [openai-agents.md](openai-agents.md) | openai-agents 0.24.0 |
 | Pydantic AI | Pattern: a guarded tool raising `ModelRetry` | [pydantic-ai.md](pydantic-ai.md) | pydantic-ai-slim 2.60.0 |
 | Vanna 2.x | Pattern: a guarded `SqlRunner` | [vanna.md](vanna.md) | vanna 2.0.2 |
 
 dbt and Airflow are covered in the [README](../../README.md#integrations)
-(`vericto-dbt`, `vericto.airflow`). All versions: Python 3.13, vericto 0.4.1.
+(`vericto-dbt`, `vericto.airflow`). All versions: Python 3.13, vericto 0.5.0.
 
 ## The pattern, in one paragraph
 

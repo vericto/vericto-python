@@ -89,5 +89,5 @@ assert conn.execute("SELECT count(*) FROM orders").fetchone() == (2,)
 
 ## Tested with
 
-Python 3.13.12, vericto 0.4.1, crewai 1.15.29 (CrewAI telemetry and tracing off),
+Python 3.13.12, vericto 0.5.0, crewai 1.15.30 (CrewAI telemetry and tracing off),
 against the local Runtime API stand-in, with a scripted LLM.

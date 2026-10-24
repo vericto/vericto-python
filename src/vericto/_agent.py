@@ -21,6 +21,7 @@ from typing import Any, Collection, Iterator, Optional
 
 from .errors import VerictoBlocked, VerictoConfigError
 from .guard import Vericto
+from .policy_context import ContextSource, EndUserSource, policy_fields, resolve
 from .verdict import Decision, Verdict
 
 ON_BLOCK = ("return", "raise")
@@ -31,6 +32,14 @@ def check_on_block(value: str) -> str:
     if mode not in ON_BLOCK:
         raise VerictoConfigError(f"on_block must be 'return' or 'raise', got {value!r}.")
     return mode
+
+
+def check_sources(context: ContextSource, end_user: EndUserSource) -> None:
+    """Validate fixed ``context`` / ``end_user`` values at construction (callables are checked per query)."""
+    policy_fields(
+        None if callable(context) else context,
+        None if callable(end_user) else end_user,
+    )
 
 
 def _rule_label(verdict: Verdict) -> str:
@@ -105,7 +114,12 @@ class EngineGate:
 
     When ``passthrough`` is true the engine is already checked by
     :func:`vericto.sqlalchemy.instrument`: no listener is added, so a statement is
-    evaluated once, and blocks still raise from that listener.
+    evaluated once, and blocks still raise from that listener (``context`` and
+    ``end_user`` then belong to ``instrument``; giving them here raises
+    :class:`~vericto.VerictoConfigError` rather than dropping them).
+
+    ``context`` and ``end_user`` (a value, or a callable read for every statement) are
+    sent with each evaluation; see :mod:`vericto.policy_context`.
     """
 
     def __init__(
@@ -116,10 +130,19 @@ class EngineGate:
         *,
         internal: Collection[str] = (),
         passthrough: bool = False,
+        context: ContextSource = None,
+        end_user: EndUserSource = None,
     ) -> None:
         from sqlalchemy import event
 
+        check_sources(context, end_user)
+        if passthrough and (context is not None or end_user is not None):
+            raise VerictoConfigError(
+                "The engine is already instrumented: pass context and end_user to vericto.sqlalchemy.instrument()."
+            )
         self.guard = guard
+        self.context = context
+        self.end_user = end_user
         self.dialect = dialect
         self.internal = frozenset(internal)
         self._active: contextvars.ContextVar[bool] = contextvars.ContextVar(f"vericto_gate_{id(self)}", default=False)
@@ -136,7 +159,13 @@ class EngineGate:
         if not self._active.get() or statement in self.internal:
             return statement, parameters
         has_params = executemany or bool(parameters)
-        final = self.guard.prepare(statement, self.dialect, paramstyle=self._paramstyle if has_params else None)
+        final = self.guard.prepare(
+            statement,
+            self.dialect,
+            paramstyle=self._paramstyle if has_params else None,
+            context=resolve(self.context),
+            end_user=resolve(self.end_user),
+        )
         return final, parameters
 
     @contextmanager

@@ -76,7 +76,8 @@ assert sql_database.run_sql("SELECT count(*) FROM orders")[1]["result"] == [(2,)
 | `FLAGGED` / `MONITORED` | Runs; logged and passed to `on_verdict`. |
 | mask | Runs the masked rewrite; the rows come back masked. |
 | `BLOCKED` | `on_block="return"` (default): nothing runs; returns the explanation (rule, reason, suggested fix) as the SQL result, with `metadata["vericto_blocked"]` (`rule_code`, `severity`, `suggested_fix`, `event_id`), so the synthesized answer says why. `on_block="raise"`: `VerictoBlocked`. |
-| no verdict, configuration error | Raised (`fail_mode="open"` runs the statement unevaluated instead). |
+| no verdict | `fail_mode="closed"` (default): `VerictoUnavailable` is raised. `fail_mode="open"`: runs unevaluated, with a `VerictoFailOpenWarning`. |
+| configuration error | `VerictoConfigError` is raised in both fail modes. |
 
 - `NLSQLTableQueryEngine` turns any retrieval error into `Error: ...` text itself,
   so with `on_block="raise"` the block reaches the answer as text there;
@@ -85,11 +86,14 @@ assert sql_database.run_sql("SELECT count(*) FROM orders")[1]["result"] == [(2,)
   return).
 - Schema reflection is not sent to Vericto; an engine already instrumented with
   `vericto.sqlalchemy.instrument` is not checked twice.
+- `context=` and `end_user=` (a value, or a callable read per statement) go with
+  every evaluation, as in the [LangChain guide](langchain.md#business-policy-context);
+  they take effect when business policies are enabled in your workspace.
 - The check is synchronous. LlamaIndex's async query path (`aquery`) calls
   `run_sql` from the event loop, so each check blocks the loop for one round
   trip.
 
 ## Tested with
 
-Python 3.13.12, vericto 0.4.1, llama-index-core 0.14.25, SQLAlchemy 2.1.6,
+Python 3.13.12, vericto 0.5.0, llama-index-core 0.14.25, SQLAlchemy 2.1.6,
 against the local Runtime API stand-in, with a scripted LLM.

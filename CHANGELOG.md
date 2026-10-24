@@ -6,6 +6,99 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-23
+
+One fail-open contract for both SDKs (shared with vericto-node 0.4.0) and the
+business policy context of the Runtime API.
+
+### Breaking change
+
+- **`Vericto.check()` follows the fail mode.** Under `fail_mode="open"` (or
+  `VERICTO_FAIL_MODE=open`), when Vericto cannot answer (network error, timeout,
+  HTTP 5xx, a response that is not JSON or has no decision, rate limit after the
+  retries, monthly quota), `check()` now returns an `UNEVALUATED` verdict whose
+  `message` is the reason, and logs a warning, instead of raising
+  `VerictoUnavailable`. The LangChain `VerictoCheckSQLTool` already answered
+  `UNEVALUATED`; it now does it through `check()`, as every wrapper of both SDKs
+  does. vericto-node 0.4.0 makes the same change (its `check()` threw there).
+  Unchanged: under `fail_mode="closed"` (the default) `check()`, `enforce()` and
+  every wrapper raise `VerictoUnavailable` (the safest contract: a returned
+  `BLOCKED` would read as a rule decision that never happened); `enforce()` under
+  `"open"` returns `UNEVALUATED` and emits `VerictoFailOpenWarning` as before;
+  `VerictoConfigError` (key, scope, dialect, request) is raised in both modes.
+  Migration, for code that caught the error under `"open"`:
+
+  ```python
+  # 0.4.x
+  try:
+      verdict = guard.check(sql, "postgres")
+  except VerictoUnavailable as exc:
+      no_verdict(str(exc))
+  else:
+      use(verdict)
+
+  # 0.5.0 (fail_mode="open")
+  verdict = guard.check(sql, "postgres")
+  if verdict.decision is Decision.UNEVALUATED:
+      no_verdict(verdict.message)
+  else:
+      use(verdict)
+  ```
+
+  Code that runs with `fail_mode="closed"` needs no change.
+
+### Added
+
+- **Business policy context** (Runtime API M2): `check`, `enforce`, `prepare` and
+  `enforce_all` take `context={"ticket": ..., "tenant": ...}` and `end_user={...}`
+  keyword arguments, sent as `context` and `end_user`; so does
+  `RuntimeApiEvaluator.evaluate`. The values are checked before anything is sent,
+  with the limits of the service (vericto-fmw `policyContextSchema`): `ticket` and
+  `tenant` 1 to 128 characters, `end_user` up to 16 attributes with identifier
+  keys (at most 63 characters) and values of 1 to 256 characters, no control
+  characters, no other `context` key; lengths are counted in UTF-16 code units, as
+  the server counts them. An invalid value raises `VerictoConfigError` in both
+  fail modes; the message names the field, never the value. They take effect when
+  business policies are enabled in the workspace; they carry the API key's trust.
+  The verdict cache keys on them. New module `vericto.policy_context`; new exports
+  `vericto.PolicyContext` and `vericto.EndUser`.
+- `vericto.sqlalchemy.instrument`, the LangChain and LlamaIndex
+  `VerictoSQLDatabase` and the LangChain `VerictoCheckSQLTool` take `context=` and
+  `end_user=`, as a value or as a callable read for every statement (for example a
+  `contextvars.ContextVar`'s `get`). Fixed values are validated at construction. On
+  an engine already instrumented, `VerictoSQLDatabase(context=...)` raises
+  `VerictoConfigError` (give them to `instrument`) instead of dropping them.
+- A custom evaluator receives `context=` / `end_user=` keyword arguments only when
+  the caller gives them; `evaluate(sql, dialect)` implementations keep working
+  (and raise `TypeError`, rather than drop them, if they are given).
+- `scripts/docs_stub.py` validates and records `context` and `end_user` like the
+  service.
+- Tests: the fail-mode contract over HTTP in both modes for a network error, a
+  timeout, a 5xx and a body that is not JSON (`tests/test_fail_mode_contract.py`);
+  `context` / `end_user` in the request body, the limits, the cache, against the
+  fake server and the docs stub (`tests/test_policy_context.py`); the LangChain and
+  LlamaIndex wrappers under both fail modes and with the context.
+
+### Fixed
+
+- `Vericto.check()` and the LangChain `VerictoCheckSQLTool` disagreed under
+  `fail_mode="open"`: the tool answered `UNEVALUATED` while `check()`, which it is
+  built on, raised. The tool now simply calls `check()`, so the two cannot drift
+  apart again (see "Breaking change").
+
+### Changed
+
+- README: the fail-mode contract for `check()`, `enforce()` and the wrappers, with
+  the 0.4 to 0.5 change; a **Business policy context** section; the Spanish
+  section. LangChain guide: the check tool under both fail modes and a `context` /
+  `end_user` example; LlamaIndex and SQLAlchemy guides: the new arguments. Every
+  example runs in the `Docs examples` jobs.
+- Dependencies: compatible dev-lock refresh (importlib-metadata 10.1.0,
+  websockets 17.3, xxhash 4.0.2, zipp 4.1.2; python-dateutil stays on 2.9 rather
+  than the 3.0 major that Airflow's range now admits). CI pins: crewai 1.15.30 in
+  `ci/requirements-docs-crewai.txt`, mypy 1.20.2 in the integration jobs. Runtime
+  dependency unchanged (urllib3).
+
 ## [0.4.1] - 2026-10-23
 
 Documentation release, with one small fix. No other behavior change.
@@ -305,6 +398,7 @@ the Vericto Runtime API (`POST /api/v1/proxy/query`).
 - The Vericto engine does not evaluate the `sqlite` dialect yet: the SQLite
   wrappers raise `VerictoUnsupportedDialect` until the server lists it.
 
+[0.5.0]: https://github.com/vericto/vericto-python/releases/tag/v0.5.0
 [0.4.1]: https://github.com/vericto/vericto-python/releases/tag/v0.4.1
 [0.4.0]: https://github.com/vericto/vericto-python/releases/tag/v0.4.0
 [0.3.2]: https://github.com/vericto/vericto-python/releases/tag/v0.3.2

@@ -149,10 +149,10 @@ connections). The wrappers call it for you; call it yourself around anything els
 
 | Method | Does | Raises |
 |---|---|---|
-| `enforce(sql, dialect, *, paramstyle=None) -> Verdict` | Evaluates and applies the decision: logs flags, applies the fail mode. Run `verdict.sql_to_execute`. | `VerictoBlocked`; `VerictoUnavailable` (fail closed); `VerictoConfigError` |
-| `prepare(sql, dialect, *, paramstyle=None) -> str` | `enforce()`, returning the SQL text to execute (the masked rewrite when there is one). | as `enforce` |
-| `enforce_all(statements, dialect) -> list[Verdict]` | `enforce()` for a batch, every statement before any of them runs. | as `enforce` |
-| `check(sql, dialect) -> Verdict` | Asks only: returns the verdict whatever it is, `BLOCKED` included, and does **not** apply the fail mode. | `VerictoUnavailable`; `VerictoConfigError` |
+| `enforce(sql, dialect, *, paramstyle=None, context=None, end_user=None) -> Verdict` | Evaluates and applies the decision: logs flags, applies the fail mode. Run `verdict.sql_to_execute`. | `VerictoBlocked`; `VerictoUnavailable` (fail closed); `VerictoConfigError` |
+| `prepare(sql, dialect, *, paramstyle=None, context=None, end_user=None) -> str` | `enforce()`, returning the SQL text to execute (the masked rewrite when there is one). | as `enforce` |
+| `enforce_all(statements, dialect, *, context=None, end_user=None) -> list[Verdict]` | `enforce()` for a batch, every statement before any of them runs. | as `enforce` |
+| `check(sql, dialect, *, context=None, end_user=None) -> Verdict` | Asks only: returns the verdict whatever it is, `BLOCKED` included; under `fail_mode="open"`, an `UNEVALUATED` verdict with the reason when Vericto cannot answer. | `VerictoUnavailable` (fail closed); `VerictoConfigError` |
 | `require_dialect(dialect) -> str` | Fails fast if the server does not evaluate the dialect; returns the normalized id (`postgresql` → `postgres`). | `VerictoUnsupportedDialect` |
 | `clear_cache()` | Drops cached verdicts (see [Caching](#caching)). | |
 
@@ -160,7 +160,8 @@ connections). The wrappers call it for you; call it yourself around anything els
 with parameters (see [Parameters and placeholders](#parameters-and-placeholders)).
 Dialects: `postgres`, `mysql`, `oracle`, `mssql`, `snowflake`, `sqlite`
 (`KNOWN_DIALECTS`; driver names such as `postgresql`, `mariadb`, `sqlserver` and
-`sqlite3` are accepted).
+`sqlite3` are accepted). `context` and `end_user` are the declared context of the
+evaluation: see [Business policy context](#business-policy-context).
 
 ```python
 from vericto import Decision, Vericto, VerictoBlocked
@@ -215,23 +216,28 @@ data in literals). Every evaluation is recorded in the Vericto audit trail.
 
 ## Fail mode
 
-When Vericto cannot answer (network error, timeout, HTTP 5xx, rate limit after
-retries, or the monthly quota `QUOTA_EXCEEDED`):
+When Vericto cannot answer (network error, timeout, HTTP 5xx, a response that is
+not JSON or has no decision, rate limit after retries, or the monthly quota
+`QUOTA_EXCEEDED`), `check()`, `enforce()` and every wrapper follow the same
+contract, shared with vericto-node 0.4.0:
 
 - `fail_mode="closed"` (default): raise `VerictoUnavailable`; the statement does
   not run.
-- `fail_mode="open"`: run the statement unevaluated, emit
-  `VerictoFailOpenWarning`, log a warning, and pass an `UNEVALUATED` verdict to
-  `on_verdict`.
+- `fail_mode="open"`: never raise for it. `check()` returns an `UNEVALUATED`
+  verdict whose `message` is the reason (and logs a warning). `enforce()` returns
+  one too: the statement runs unevaluated, `VerictoFailOpenWarning` is emitted, a
+  warning is logged, and the verdict goes to `on_verdict`. The LangChain
+  `VerictoCheckSQLTool` answers `UNEVALUATED` with the reason.
 
 Configuration errors are **never** failed open: a missing or revoked key (401), a
 key without the scope or for another database (403), a malformed request (400) or
 an unsupported dialect raise `VerictoConfigError` in both modes, because failing
 open on them would switch the firewall off silently.
 
-`VerictoUnavailable` is raised in both modes by `check()`, which never applies
-the fail mode (the LangChain `VerictoCheckSQLTool` answers `UNEVALUATED` instead
-under `fail_mode="open"`).
+Changed in 0.5.0: `check()` used to raise `VerictoUnavailable` under
+`fail_mode="open"` too (only the LangChain check tool answered `UNEVALUATED`). Code
+that caught it there now gets the verdict: test
+`verdict.decision is Decision.UNEVALUATED` instead.
 
 ```python
 from vericto import Vericto, VerictoUnavailable
@@ -243,10 +249,64 @@ try:
 except VerictoUnavailable as exc:
     print("not executed:", exc)
 
-# Fail open: the statement may run unevaluated, with a VerictoFailOpenWarning.
+try:
+    guard.check("SELECT 1", "postgres")  # check() follows the fail mode too
+    raise AssertionError("unreachable: closed raises")
+except VerictoUnavailable:
+    print("check: no verdict")
+
+# Fail open: the statement may run unevaluated, with a VerictoFailOpenWarning,
+# and check() returns an UNEVALUATED verdict with the reason instead of raising.
 open_guard = Vericto(api_url="http://127.0.0.1:9", max_retries=0, fail_mode="open")
 verdict = open_guard.enforce("SELECT 1", "postgres")
 assert verdict.degraded and open_guard.prepare("SELECT 1", "postgres") == "SELECT 1"
+asked = open_guard.check("DROP TABLE orders", "postgres")
+print(asked.decision.value, asked.message)  # UNEVALUATED Vericto did not return a verdict ...
+assert asked.decision.value == "UNEVALUATED" and asked.message
+```
+
+## Business policy context
+
+`check`, `enforce`, `prepare` and `enforce_all` take two optional keyword
+arguments with the declared context of the evaluation, which business policies
+can read:
+
+| Argument | Sent as | Limits (the server's) |
+|---|---|---|
+| `context={"ticket": ...}` | `context.ticket` | the change ticket the statement belongs to; 1 to 128 characters, no control characters |
+| `context={"tenant": ...}` | `context.tenant` | the tenant it runs for; 1 to 128 characters, no control characters |
+| `end_user={...}` | `end_user` | the end user your service acts for: up to 16 attributes; keys are identifiers (a letter or `_`, then letters, digits or `_`, at most 63 characters), values 1 to 256 characters, no control characters |
+
+> **Note:** takes effect when business policies are enabled in your workspace.
+> Otherwise the server ignores both fields. The values are asserted by your
+> service: they carry the trust of the API key that sends them, never more.
+
+The limits are checked before anything is sent: an invalid value raises
+`VerictoConfigError` (in both fail modes; the message names the field, never the
+value). No other `context` key is accepted. The verdict cache keys on them too.
+`vericto.sqlalchemy.instrument` and the LangChain and LlamaIndex
+`VerictoSQLDatabase` (and `VerictoCheckSQLTool`) take `context=` and `end_user=` as
+a value or as a callable read for every statement, for example a
+`contextvars.ContextVar`'s `get`. Types: `vericto.PolicyContext`, `vericto.EndUser`.
+
+```python
+from vericto import Vericto, VerictoConfigError
+
+guard = Vericto()
+
+verdict = guard.enforce(
+    "UPDATE orders SET status = 'refunded' WHERE id = 7",
+    "postgres",
+    context={"ticket": "CHG-1042", "tenant": "acme"},
+    end_user={"id": "u_829", "role": "support"},
+)
+print(verdict.decision.value)  # ALLOWED
+
+try:  # checked before it is sent: no request is made
+    guard.check("SELECT 1", "postgres", end_user={"user-id": "u_829"})
+    raise AssertionError("unreachable: an invalid key is refused")
+except VerictoConfigError as exc:
+    print(exc)  # end_user: keys are identifiers (letters, digits, _), at most 63 characters.
 ```
 
 ### Timeouts and retries
@@ -340,14 +400,17 @@ All inherit from `VerictoError`.
 | `VerictoBlocked` | Vericto blocked the statement. `.verdict`, `.findings`, `.suggested_fix`, `.sql`. |
 | `VerictoUnavailable` | No verdict and `fail_mode="closed"`. |
 | `VerictoQuotaExceeded` | Subclass of `VerictoUnavailable`: monthly quota used (`.resets_at`). |
-| `VerictoConfigError` | Key, scope, database id, URL or request problem. Raised in both fail modes. |
+| `VerictoConfigError` | Key, scope, database id, URL or request problem, or an invalid `context` / `end_user`. Raised in both fail modes. |
 | `VerictoUnsupportedDialect` | Subclass of `VerictoConfigError`: the server does not evaluate that dialect. |
 | `PlaceholderMappingError` | A masked rewrite could not be mapped back to `%s`-style placeholders. |
 
 ## Evaluators
 
 `Vericto` takes an `evaluator`: anything with `evaluate(sql, dialect) -> Verdict`
-and `supported_dialects()`. This release ships `RuntimeApiEvaluator`. An embedded
+and `supported_dialects()`. When the caller gives `context` or `end_user`, the
+guard passes them as keyword arguments of the same names (an evaluator without
+them raises `TypeError` then, rather than dropping them). This release ships
+`RuntimeApiEvaluator`. An embedded
 evaluator (the Vericto engine in-process with synced rules, for latency and
 offline use) can be added later behind the same interface without changing the
 wrappers or your code beyond the constructor.
@@ -366,7 +429,7 @@ Runtime API stand-in, with scripted models) and the versions it was tested with.
 | SQLAlchemy (ORM, Core, `text()`; `AsyncEngine`) | Official: `vericto.sqlalchemy` (`vericto[sqlalchemy]`) | [docs/frameworks/sqlalchemy.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/sqlalchemy.md) | SQLAlchemy 2.1.6 |
 | Any DB-API driver; `sqlite3`; snowflake-connector-python | Official: `vericto.wrap`, `vericto.sqlite`, `vericto.snowflake` | [docs/frameworks/dbapi.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/dbapi.md) | sqlite3, psycopg 3.3.6 |
 | Django | Pattern: `connection.execute_wrapper` | [docs/frameworks/django.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/django.md) | Django 6.1.2 |
-| CrewAI | Pattern: a guarded `@tool` | [docs/frameworks/crewai.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/crewai.md) | crewai 1.15.29 |
+| CrewAI | Pattern: a guarded `@tool` | [docs/frameworks/crewai.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/crewai.md) | crewai 1.15.30 |
 | OpenAI Agents SDK | Pattern: a guarded `function_tool` | [docs/frameworks/openai-agents.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/openai-agents.md) | openai-agents 0.24.0 |
 | Pydantic AI | Pattern: a guarded tool raising `ModelRetry` | [docs/frameworks/pydantic-ai.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/pydantic-ai.md) | pydantic-ai-slim 2.60.0 |
 | Vanna 2.x | Pattern: a guarded `SqlRunner` | [docs/frameworks/vanna.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/vanna.md) | vanna 2.0.2 |
@@ -374,7 +437,7 @@ Runtime API stand-in, with scripted models) and the versions it was tested with.
 | Airflow 3 | Official: `vericto.airflow` (`vericto[airflow]`) | [Airflow](#airflow) | Airflow 3.3.2 (common-sql 2.1.1), official constraints |
 | LangChain.js | `@vericto/sdk/langchain` (Node) | [vericto-node](https://github.com/vericto/vericto-node) | see vericto-node |
 
-All on Python 3.13 with vericto 0.4.1. The pattern in one line: call
+All on Python 3.13 with vericto 0.5.0. The pattern in one line: call
 `guard.prepare(sql, dialect)` right before your code executes `sql`, execute what
 it returns, hand a `VerictoBlocked` back to the model as text (rule and
 `suggested_fix`), and let `VerictoUnavailable` / `VerictoConfigError` propagate so
@@ -405,7 +468,8 @@ agent = create_sql_agent(llm, toolkit=SQLDatabaseToolkit(db=db, llm=llm), extra_
 ```
 
 `VerictoSQLDatabase` is a `langchain_community.utilities.SQLDatabase` (also
-`VerictoSQLDatabase(engine, guard=..., dialect=..., on_block=...)`). Every query
+`VerictoSQLDatabase(engine, guard=..., dialect=..., on_block=..., context=...,
+end_user=...)`). Every query
 it runs, and the sample rows `get_table_info` puts in the prompt, is checked
 after SQLAlchemy compiles it; schema reflection is not sent.
 
@@ -416,12 +480,16 @@ after SQLAlchemy compiles it; schema reflection is not sent.
   `VerictoBlocked` instead (`run(fetch="cursor")` always raises).
 - **Mask**: the masked rewrite runs, sample rows included. **FLAGGED /
   MONITORED**: run, logged, passed to `on_verdict`.
-- **Vericto unavailable or misconfigured**: raised, never handed to the model
-  (`fail_mode="open"` runs the query unevaluated).
+- **Vericto unavailable**: under `fail_mode="closed"` (default) raised, never
+  handed to the model; `fail_mode="open"` runs the query unevaluated. A
+  configuration error is raised in both modes.
 - A blocked sample-rows query is left out of the table info instead of failing.
 - `VerictoCheckSQLTool` (`vericto_check_sql`) only asks: it returns ALLOWED,
-  FLAGGED, the masked query that would run, or the block with its fix. Each call is
-  one Runtime API evaluation.
+  FLAGGED, the masked query that would run, or the block with its fix; under
+  `fail_mode="open"`, `UNEVALUATED` with the reason when Vericto cannot answer.
+  Each call is one Runtime API evaluation.
+- `context=` and `end_user=` (a value, or a callable read per query) go with every
+  evaluation; see [Business policy context](#business-policy-context).
 - An engine already instrumented with `vericto.sqlalchemy.instrument` is not
   checked twice (new helper: `vericto.sqlalchemy.is_instrumented`).
 
@@ -679,9 +747,16 @@ el `execute()` del driver: `snowflake-connector-python`, `sqlite3`, SQLAlchemy
 - **FLAGGED / MONITORED**: se ejecuta y se registra (logger `vericto`, callback
   `on_verdict`).
 - **Máscara de columnas sensibles**: se ejecuta `rewritten_query`, nunca la original.
-- **Sin respuesta de Vericto**: `fail_mode="closed"` (por defecto) bloquea;
-  `"open"` ejecuta y emite `VerictoFailOpenWarning`. Los errores de configuración
-  (clave inválida, permiso, dialecto) nunca se dejan pasar.
+- **Sin respuesta de Vericto**: `fail_mode="closed"` (por defecto) lanza
+  `VerictoUnavailable` en `check()`, `enforce()` y los wrappers; `"open"` nunca lanza
+  por eso: `check()` devuelve un veredicto `UNEVALUATED` con el motivo y `enforce()`
+  ejecuta y emite `VerictoFailOpenWarning` (desde 0.5.0; antes `check()` lanzaba
+  también en `"open"`). Los errores de configuración (clave inválida, permiso,
+  dialecto) nunca se dejan pasar.
+- **Contexto de políticas de negocio**: `check`, `enforce`, `prepare` y `enforce_all`
+  aceptan `context={"ticket": ..., "tenant": ...}` y `end_user={...}`, validados con
+  los límites del servidor antes de enviarlos. Tienen efecto cuando las políticas de
+  negocio están habilitadas en tu workspace.
 
 Configuración: `VERICTO_API_KEY` (clave `vtro_...` con el scope `proxy:evaluate`),
 `VERICTO_DATABASE_ID` y, opcionalmente, `VERICTO_API_URL`, `VERICTO_FAIL_MODE`,

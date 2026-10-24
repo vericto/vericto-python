@@ -82,5 +82,5 @@ assert conn.execute("SELECT status FROM orders").fetchall() == [("shipped",)]
 
 ## Tested with
 
-Python 3.13.12, vericto 0.4.1, pydantic-ai-slim 2.60.0, against the local Runtime
+Python 3.13.12, vericto 0.5.0, pydantic-ai-slim 2.60.0, against the local Runtime
 API stand-in, with a scripted `FunctionModel`.

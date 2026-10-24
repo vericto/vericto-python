@@ -23,6 +23,7 @@ from .errors import (
     VerictoUnavailable,
     VerictoUnsupportedDialect,
 )
+from .policy_context import policy_fields
 from .verdict import Verdict
 
 DEFAULT_API_URL = "https://api.vericto.com"
@@ -139,8 +140,19 @@ class RuntimeApiEvaluator:
 
     # -- evaluation ---------------------------------------------------------------
 
-    def evaluate(self, sql: str, dialect: str) -> Verdict:
+    def evaluate(
+        self,
+        sql: str,
+        dialect: str,
+        *,
+        context: Optional[Mapping[str, Any]] = None,
+        end_user: Optional[Mapping[str, Any]] = None,
+    ) -> Verdict:
         """Ask the Runtime API for the verdict on one statement.
+
+        ``context`` (``ticket``, ``tenant``) and ``end_user`` are sent when given, after
+        the checks of :mod:`vericto.policy_context`; they take effect when business
+        policies are enabled in your workspace.
 
         Returns the verdict for every answer the server gives, ``BLOCKED`` (HTTP 403)
         included: applying it is the guard's job. Retries connection errors, timeouts,
@@ -152,9 +164,12 @@ class RuntimeApiEvaluator:
             VerictoUnavailable: no verdict after the retries.
             VerictoConfigError: 401, 403 without a decision, 400 and other client
                 errors (:class:`~vericto.VerictoUnsupportedDialect` for a dialect the
-                server does not list). Never retried.
+                server does not list), or an invalid ``context`` / ``end_user``. Never
+                retried.
         """
-        payload = json.dumps({"query": sql, "database_id": self.database_id, "dialect": dialect}).encode("utf-8")
+        body_fields: dict[str, Any] = {"query": sql, "database_id": self.database_id, "dialect": dialect}
+        body_fields.update(policy_fields(context, end_user))
+        payload = json.dumps(body_fields).encode("utf-8")
         headers = dict(self._headers)
         headers["X-API-Key"] = self._api_key
         url = self.api_url + EVALUATE_PATH

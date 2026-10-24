@@ -139,7 +139,7 @@ jobs:
           PYTHON_VERSION: ${{ matrix.python }}
           TYPECHECK: ${{ matrix.typecheck }}
         run: |
-          uv pip install --python "$RUNNER_TEMP/extra/bin/python" mypy==1.19.1
+          uv pip install --python "$RUNNER_TEMP/extra/bin/python" mypy==1.20.2
           "$RUNNER_TEMP/extra/bin/python" -m mypy --python-version "$PYTHON_VERSION" --follow-imports=silent $TYPECHECK
 
   docs:

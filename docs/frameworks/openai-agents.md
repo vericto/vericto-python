@@ -106,5 +106,5 @@ assert conn.execute("SELECT count(*) FROM orders").fetchone() == (2,)
 
 ## Tested with
 
-Python 3.13.12, vericto 0.4.1, openai-agents 0.24.0, against the local Runtime
+Python 3.13.12, vericto 0.5.0, openai-agents 0.24.0, against the local Runtime
 API stand-in, with a scripted model (tracing disabled, no OpenAI calls).

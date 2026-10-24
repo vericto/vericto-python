@@ -303,9 +303,22 @@ def test_check_does_not_apply_the_decision() -> None:
     assert guard.check(sql, "postgres").blocked  # returned, not raised
     with pytest.raises(TypeError):
         guard.check(None, "postgres")  # type: ignore[arg-type]
+
+
+def test_check_applies_the_fail_mode() -> None:
+    # 0.5.0: check() follows the fail mode, as enforce() does (it used to raise in both).
     down = Vericto(StubEvaluator(error=VerictoUnavailable("down")), fail_mode="open")
-    with pytest.raises(VerictoUnavailable):  # no fail mode in check()
-        down.check("SELECT 1", "postgres")
+    verdict = down.check("SELECT 1", "postgres")
+    assert verdict.decision is Decision.UNEVALUATED
+    assert verdict.message == "down"
+    assert verdict.degraded and not verdict.blocked
+    closed = Vericto(StubEvaluator(error=VerictoUnavailable("down")))
+    with pytest.raises(VerictoUnavailable):
+        closed.check("SELECT 1", "postgres")
+    for mode in ("open", "closed"):
+        broken = Vericto(StubEvaluator(error=VerictoConfigError("revoked")), fail_mode=mode)
+        with pytest.raises(VerictoConfigError):
+            broken.check("SELECT 1", "postgres")
 
 
 def test_every_decision_is_logged_without_sql(caplog: pytest.LogCaptureFixture) -> None:

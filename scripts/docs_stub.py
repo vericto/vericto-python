@@ -24,6 +24,10 @@ Markers in the SQL force the other answers: ``/* stub:monitored */``,
 ``vtro_revoked`` answers 401; a database id of all zeros answers 403 ``FORBIDDEN``;
 a dialect the config does not list answers 400 ``VALIDATION_ERROR``.
 
+``context`` (``ticket``, ``tenant``) and ``end_user`` are validated with the
+service's limits (as with business policies enabled: 400 ``VALIDATION_ERROR`` for
+an invalid value) and recorded in ``requests``; they do not change the verdict.
+
 Run it on its own with ``python scripts/docs_stub.py [port]``; it prints its URL.
 """
 
@@ -42,6 +46,8 @@ DIALECTS = ["postgres", "mysql", "oracle", "mssql", "snowflake", "sqlite"]
 FORBIDDEN_DATABASE = "00000000-0000-0000-0000-000000000000"
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 _MARKER = re.compile(r"/\*\s*stub:(\w+)(?:=([\w.]+))?\s*\*/")
+_ATTR_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 Reply = Tuple[int, Dict[str, Any], Dict[str, str]]
 
@@ -158,6 +164,39 @@ def evaluate(sql: str) -> Reply:
     return _allowed()
 
 
+def _printable(value: Any, maximum: int) -> bool:
+    return isinstance(value, str) and 0 < len(value.encode("utf-16-le")) // 2 <= maximum and not _CONTROL.search(value)
+
+
+def policy_context_errors(body: Dict[str, Any]) -> List[Dict[str, str]]:
+    """The validation errors of ``context`` / ``end_user`` (vericto-fmw policyContextSchema)."""
+    details: List[Dict[str, str]] = []
+    context = body.get("context")
+    if context is not None:
+        if not isinstance(context, dict):
+            details.append({"field": "context", "message": "Expected object"})
+        else:
+            for key, value in context.items():
+                if key not in ("ticket", "tenant"):
+                    details.append({"field": "context", "message": f"Unrecognized key: {key}"})
+                elif not _printable(value, 128):
+                    details.append({"field": f"context.{key}", "message": "1 to 128 characters, no control characters"})
+    end_user = body.get("end_user")
+    if end_user is not None:
+        if not isinstance(end_user, dict):
+            details.append({"field": "end_user", "message": "Expected object"})
+        else:
+            if len(end_user) > 16:
+                details.append({"field": "end_user", "message": "end_user: at most 16 keys"})
+            for key, value in end_user.items():
+                if not _ATTR_KEY.fullmatch(key):
+                    details.append({"field": "end_user", "message": "keys are identifiers, at most 63 characters"})
+                elif not _printable(value, 256):
+                    message = "1 to 256 characters, no control characters"
+                    details.append({"field": f"end_user.{key}", "message": message})
+    return details
+
+
 class _Handler(BaseHTTPRequestHandler):
     server: StubServer
 
@@ -208,6 +247,7 @@ class _Handler(BaseHTTPRequestHandler):
             details.append({"field": "database_id", "message": "Invalid uuid"})
         if body.get("dialect") not in self.server.dialects:
             details.append({"field": "dialect", "message": f"Must be one of: {', '.join(self.server.dialects)}"})
+        details.extend(policy_context_errors(body))
         if details:
             self._send(400, {"error": {"code": "VALIDATION_ERROR", "message": "Validation failed", "details": details}})
             return
@@ -215,7 +255,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(*_error(403, "FORBIDDEN", "This API key is not authorized for that workspace or database")[:2])
             return
         with self.server.lock:
-            self.server.requests.append({"query": body["query"], "dialect": body["dialect"]})
+            recorded = {"query": body["query"], "dialect": body["dialect"]}
+            recorded.update({k: body[k] for k in ("context", "end_user") if k in body})
+            self.server.requests.append(recorded)
         status, reply, headers = evaluate(body["query"])
         if status in (200, 403) and "decision" in reply:
             headers = {**headers, "X-Quota-Limit": "unlimited", "X-Quota-Remaining": "unlimited"}

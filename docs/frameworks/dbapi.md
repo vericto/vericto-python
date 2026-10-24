@@ -91,6 +91,6 @@ checked.
 
 ## Tested with
 
-Python 3.13.12, vericto 0.4.1, `sqlite3` (SQLite 3.50), psycopg 3.3.6 against
+Python 3.13.12, vericto 0.5.0, `sqlite3` (SQLite 3.50), psycopg 3.3.6 against
 PostgreSQL 17, against the local Runtime API stand-in
 (`scripts/docs_stub.py`).
