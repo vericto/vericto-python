@@ -1,4 +1,4 @@
-Official Vericto SDK for Python: check SQL before it runs (snowflake-connector-python, sqlite3, SQLAlchemy, any DB-API driver, LangChain, LlamaIndex, dbt and Airflow).
+Official Vericto SDK for Python: database guardrails for AI agents. Check SQL before it runs (snowflake-connector-python, sqlite3, SQLAlchemy, any DB-API driver, LangChain, LlamaIndex, dbt and Airflow).
 
 # vericto (Python)
 
@@ -6,9 +6,11 @@ Official Vericto SDK for Python: check SQL before it runs (snowflake-connector-p
 > thin wrappers for `snowflake-connector-python`, `sqlite3`, SQLAlchemy and any
 > DB-API driver, and integrations for LangChain, LlamaIndex, dbt and Airflow.
 
-Vericto is a deterministic SQL firewall: it parses each statement into an AST and
-evaluates it against your workspace's rules (destructive statements, missing
-`WHERE`/`LIMIT`, risky DDL, data exposure, sensitive columns, agent allowlists).
+Vericto puts database guardrails between AI agents and your database: it parses
+each statement into an AST and evaluates it against your workspace's rules
+(destructive statements, missing `WHERE`/`LIMIT`, risky DDL, data exposure,
+sensitive columns, agent allowlists). Deterministic: same statement, same rules,
+same verdict.
 This package puts that check in front of your driver's `execute()`: blocked
 statements raise before they reach the database, flagged ones run and are
 reported, and statements that read masked columns run as the masked rewrite
@@ -738,7 +740,8 @@ under its own [terms](https://vericto.com/terms).
 
 ## En español
 
-`vericto` valida cada sentencia SQL con Vericto **antes** de ejecutarla, envolviendo
+Guardrails de base de datos para agentes de IA: `vericto` valida cada sentencia SQL
+con Vericto **antes** de ejecutarla, envolviendo
 el `execute()` del driver: `snowflake-connector-python`, `sqlite3`, SQLAlchemy
 (cualquier dialecto) o cualquier driver DB-API.
 

@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "vericto"
 dynamic = ["version"]
-description = "Official Vericto SDK for Python: check SQL before it runs. Wrappers for snowflake-connector-python, sqlite3, SQLAlchemy and any DB-API driver; integrations for LangChain, LlamaIndex, dbt and Airflow."
+description = "Official Vericto SDK for Python: database guardrails for AI agents, check SQL before it runs. Wrappers for snowflake-connector-python, sqlite3, SQLAlchemy and any DB-API driver; integrations for LangChain, LlamaIndex, dbt and Airflow."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.10"
 authors = [{ name = "Vericto", email = "security@vericto.com" }]
-keywords = ["sql", "firewall", "security", "snowflake", "sqlite", "sqlalchemy", "ai-agents", "langchain", "llamaindex", "dbt", "airflow", "vericto"]
+keywords = ["sql", "firewall", "security", "guardrails", "database-guardrails", "ai-guardrails", "snowflake", "sqlite", "sqlalchemy", "ai-agents", "langchain", "llamaindex", "dbt", "airflow", "vericto"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
