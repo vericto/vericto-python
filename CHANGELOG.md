@@ -6,6 +6,11 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-01
+
+Python 3.11 or later, and an official integration for Pydantic AI. On Python 3.10,
+stay on 0.6.x.
+
 ### Upgrade notes
 
 - **Python 3.11 or later is required** (`requires-python = ">=3.11"`). Python
@@ -524,6 +529,7 @@ the Vericto Runtime API (`POST /api/v1/proxy/query`).
 - The Vericto engine does not evaluate the `sqlite` dialect yet: the SQLite
   wrappers raise `VerictoUnsupportedDialect` until the server lists it.
 
+[0.7.0]: https://github.com/vericto/vericto-python/releases/tag/v0.7.0
 [0.6.0]: https://github.com/vericto/vericto-python/releases/tag/v0.6.0
 [0.5.1]: https://github.com/vericto/vericto-python/releases/tag/v0.5.1
 [0.5.0]: https://github.com/vericto/vericto-python/releases/tag/v0.5.0
