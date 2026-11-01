@@ -30,7 +30,7 @@ class VerictoConfigError(VerictoError):
     a key without the ``proxy:evaluate`` scope, or a malformed request.
 
     Raised whatever the fail mode is: failing open on a revoked key would turn the
-    firewall off without anyone noticing.
+    guardrails off without anyone noticing.
     """
 
     def __init__(self, message: str, *, status: Optional[int] = None, code: Optional[str] = None) -> None:

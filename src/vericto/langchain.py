@@ -226,7 +226,7 @@ class VerictoCheckSQLTool(BaseTool):
 
     name: str = "vericto_check_sql"
     description: str = (
-        "Check a SQL query with Vericto, the SQL firewall, before running it. "
+        "Check a SQL query with Vericto, database guardrails for AI agents, before running it. "
         "Input: the exact SQL query. Output: whether it is allowed, and if it is blocked, "
         "the rule it breaks and a suggested fix. Use it to validate a query you are unsure about."
     )

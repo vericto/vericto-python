@@ -1,10 +1,11 @@
-Official Vericto SDK for Python: database guardrails for AI agents. Check SQL before it runs (snowflake-connector-python, sqlite3, SQLAlchemy, any DB-API driver, LangChain, LlamaIndex, dbt and Airflow).
+Official Vericto SDK for Python: database guardrails for AI agents. Check SQL before it runs (snowflake-connector-python, sqlite3, SQLAlchemy, any DB-API driver, LangChain, LlamaIndex, the OpenAI Agents SDK, dbt and Airflow).
 
 # vericto (Python)
 
 > Check every SQL statement with [Vericto](https://vericto.com) **before** it runs:
 > thin wrappers for `snowflake-connector-python`, `sqlite3`, SQLAlchemy and any
-> DB-API driver, and integrations for LangChain, LlamaIndex, dbt and Airflow.
+> DB-API driver, and integrations for LangChain, LlamaIndex, the OpenAI Agents SDK,
+> dbt and Airflow.
 
 Vericto puts database guardrails between AI agents and your database: it parses
 each statement into an AST and evaluates it against your workspace's rules
@@ -31,6 +32,7 @@ pip install "vericto[snowflake]"     # + snowflake-connector-python
 pip install "vericto[sqlalchemy]"    # + SQLAlchemy
 pip install "vericto[langchain]"     # LangChain SQL agents and chains
 pip install "vericto[llamaindex]"    # LlamaIndex text-to-SQL
+pip install "vericto[openai-agents]" # OpenAI Agents SDK SQL tools and tool guardrails
 pip install "vericto[airflow]"       # Airflow 3 operator and cluster policy
 pip install "vericto[dbt]"           # vericto-dbt: CI checks for dbt projects (no extra dependency)
 ```
@@ -234,7 +236,7 @@ contract, shared with vericto-node 0.4.0:
 Configuration errors are **never** failed open: a missing or revoked key (401), a
 key without the scope or for another database (403), a malformed request (400) or
 an unsupported dialect raise `VerictoConfigError` in both modes, because failing
-open on them would switch the firewall off silently.
+open on them would switch the guardrails off silently.
 
 Changed in 0.5.0: `check()` used to raise `VerictoUnavailable` under
 `fail_mode="open"` too (only the LangChain check tool answered `UNEVALUATED`). Code
@@ -432,14 +434,14 @@ Runtime API stand-in, with scripted models) and the versions it was tested with.
 | Any DB-API driver; `sqlite3`; snowflake-connector-python | Official: `vericto.wrap`, `vericto.sqlite`, `vericto.snowflake` | [docs/frameworks/dbapi.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/dbapi.md) | sqlite3, psycopg 3.3.6 |
 | Django | Pattern: `connection.execute_wrapper` | [docs/frameworks/django.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/django.md) | Django 6.1.2 |
 | CrewAI | Pattern: a guarded `@tool` | [docs/frameworks/crewai.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/crewai.md) | crewai 1.15.30 |
-| OpenAI Agents SDK | Pattern: a guarded `function_tool` | [docs/frameworks/openai-agents.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/openai-agents.md) | openai-agents 0.24.0 |
+| OpenAI Agents SDK (`function_tool`, tool input guardrails, MCP server tools) | Official: `vericto.openai_agents` (`vericto[openai-agents]`) | [docs/frameworks/openai-agents.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/openai-agents.md) | openai-agents 0.24.0 |
 | Pydantic AI | Pattern: a guarded tool raising `ModelRetry` | [docs/frameworks/pydantic-ai.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/pydantic-ai.md) | pydantic-ai-slim 2.60.0 |
 | Vanna 2.x | Pattern: a guarded `SqlRunner` | [docs/frameworks/vanna.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/vanna.md) | vanna 2.0.2 |
 | dbt | Official: `vericto-dbt check` (`vericto[dbt]`) | [dbt](#dbt) | dbt manifest v12 fixtures (no dbt runtime) |
 | Airflow 3 | Official: `vericto.airflow` (`vericto[airflow]`) | [Airflow](#airflow) | Airflow 3.3.2 (common-sql 2.1.1), official constraints |
 | LangChain.js | `@vericto/sdk/langchain` (Node) | [vericto-node](https://github.com/vericto/vericto-node) | see vericto-node |
 
-All on Python 3.13 with vericto 0.5.0. The pattern in one line: call
+All on Python 3.13 with vericto 0.5.0 (the OpenAI Agents SDK with 0.6.0). The pattern in one line: call
 `guard.prepare(sql, dialect)` right before your code executes `sql`, execute what
 it returns, hand a `VerictoBlocked` back to the model as text (rule and
 `suggested_fix`), and let `VerictoUnavailable` / `VerictoConfigError` propagate so
@@ -515,6 +517,41 @@ answer says why; `"raise"` raises `VerictoBlocked` (`NLSQLTableQueryEngine`
 turns any retrieval error into `Error: ...` text itself; `NLSQLRetriever(...,
 handle_sql_errors=False)` lets it through). Masks, flags and unavailability as
 for LangChain.
+
+### OpenAI Agents SDK
+
+Full guide: [docs/frameworks/openai-agents.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/openai-agents.md).
+
+<!-- docs-check: skip a fragment (pool is your database pool); the guide's examples run -->
+```python
+from agents import Agent, function_tool
+from vericto.openai_agents import vericto_sql_tool, vericto_tool_input_guardrail
+
+
+@vericto_sql_tool(dialect="postgres")  # function_tool; Vericto checks the SQL before it runs
+async def run_sql(query: str) -> str:
+    """Run one read-only SQL query and return the rows."""
+    return str(await pool.fetch(query))
+
+
+agent = Agent(name="analyst", tools=[run_sql])
+
+# A SQL tool you do not write (a FunctionTool, or an MCP server's tools):
+guardrail = vericto_tool_input_guardrail(dialect="postgres", argument="sql", tools=["execute_sql"])
+```
+
+- **BLOCKED**: the function is not called; the model gets the refusal (rule
+  code, reason, `suggested_fix`) as the tool output. `on_block="raise"` stops
+  the run.
+- **approved_query** (mask, `LIMIT` bound): `vericto_sql_tool` runs that query
+  instead of the original. The guardrail cannot change a call's arguments, so it
+  rejects the call with the approved query for the model to send again.
+- **FLAGGED / MONITORED**: run, logged, passed to `on_verdict`; the guardrail's
+  `output_info` is the verdict.
+- **Vericto unavailable**: `fail_mode="closed"` (default) stops the run
+  (`agents.exceptions.UserError` caused by `VerictoUnavailable`), never model
+  text; `fail_mode="open"` runs unevaluated. A configuration error stops the run
+  in both modes.
 
 ### dbt
 
@@ -614,7 +651,7 @@ Tests use a local stand-in for the Runtime API and the CI-check API
 (pytest-httpserver), the real `sqlite3` module, SQLAlchemy on SQLite, and a fake
 Snowflake connection (the real connector's statement splitter is used); nothing
 connects to Snowflake in CI. The integration tests (`tests/test_langchain.py`,
-`test_llamaindex.py`, `test_airflow.py`) skip unless their framework is
+`test_llamaindex.py`, `test_openai_agents.py`, `test_airflow.py`) skip unless their framework is
 installed; CI runs each in its own job against the versions pinned in
 `ci/requirements-*.txt` (Airflow with its official constraints file), with
 scripted LLMs and no network calls:
@@ -647,13 +684,13 @@ uv venv /tmp/vericto-docs-lc && uv pip install --python /tmp/vericto-docs-lc -e 
 
 CI measures line and branch coverage and fails a job under **80%**
 (`fail_under` in `pyproject.toml`). The core job reports every module except the
-three integrations, whose framework it does not install; each integration job
-reports its own module (`langchain.py`, `llamaindex.py`, `dbt.py`, `airflow/`).
+framework integrations, whose framework it does not install; each integration job
+reports its own module (`langchain.py`, `llamaindex.py`, `openai_agents.py`, `dbt.py`, `airflow/`).
 The same checks locally:
 
 ```bash
 uv run coverage run -m pytest
-uv run coverage report --omit="*/vericto/langchain.py,*/vericto/llamaindex.py,*/vericto/airflow/*"
+uv run coverage report --omit="*/vericto/langchain.py,*/vericto/llamaindex.py,*/vericto/openai_agents.py,*/vericto/airflow/*"
 uv pip install --python /tmp/vericto-lc coverage==7.17.0
 /tmp/vericto-lc/bin/python -m coverage run -m pytest tests/test_langchain.py
 /tmp/vericto-lc/bin/python -m coverage report --include=src/vericto/langchain.py
@@ -768,11 +805,15 @@ envían a Vericto.
 
 Integraciones oficiales: `vericto.langchain` y `vericto.llamaindex` (un
 `SQLDatabase` que valida cada consulta del agente; si se bloquea, el agente recibe
-la regla y la corrección sugerida en vez de una excepción), `vericto.sqlalchemy`,
+la regla y la corrección sugerida en vez de una excepción), `vericto.openai_agents`
+(`vericto[openai-agents]`: `vericto_sql_tool`, un `function_tool` que valida el SQL
+antes de ejecutarlo y ejecuta la consulta aprobada por Vericto cuando la hay, y
+`vericto_tool_input_guardrail`, un guardrail de entrada nativo para herramientas
+que no escribes, como las de un servidor MCP), `vericto.sqlalchemy`,
 `vericto.wrap` para cualquier driver DB-API, `vericto-dbt check` (valida el SQL
 compilado de un proyecto dbt en CI con la API de CI-check, con salida JSON/SARIF)
-y `vericto.airflow` (operador y política de clúster). Para Django, CrewAI, el
-OpenAI Agents SDK, Pydantic AI y Vanna no hay módulo de vericto: las guías de
+y `vericto.airflow` (operador y política de clúster). Para Django, CrewAI,
+Pydantic AI y Vanna no hay módulo de vericto: las guías de
 [docs/frameworks](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/README.md) muestran el patrón (llamar a
 `guard.prepare(sql, dialecto)` justo antes de ejecutar y ejecutar lo que
 devuelve), con ejemplos probados y las versiones usadas. Ver

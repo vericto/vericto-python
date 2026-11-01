@@ -9,6 +9,8 @@ again through the real frameworks.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, List
 
@@ -156,3 +158,14 @@ def test_gate_passthrough_adds_no_listener(fake: FakeVericto, guard: Vericto, en
     assert len(fake.requests) == 1  # evaluated once, by instrument()'s listener
     gate.remove()
     remove()
+
+
+def test_importing_vericto_never_imports_a_framework() -> None:
+    # The integrations are optional extras: the base install must work without them.
+    code = (
+        "import sys, vericto, vericto.guard, vericto.dbapi\n"
+        "loaded = {name.split('.')[0] for name in sys.modules}\n"
+        "found = loaded & {'agents', 'openai', 'langchain_core', 'langchain_community', 'llama_index', 'airflow'}\n"
+        "assert not found, found\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)  # noqa: S603

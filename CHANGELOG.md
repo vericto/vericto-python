@@ -6,6 +6,58 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-31
+
+An official integration for the OpenAI Agents SDK. No change for existing code.
+
+### Added
+
+- **`vericto.openai_agents`** (extra `vericto[openai-agents]`,
+  `openai-agents>=0.22,<0.25`, tested with 0.24.0). Two entry points:
+  - `vericto_sql_tool(dialect=..., ...)`: `agents.function_tool` for a SQL tool
+    you write (sync or `async`). Vericto checks the SQL argument (`argument=`,
+    default `"query"`) before the function runs. `BLOCKED`: the function is not
+    called, and the model gets the refusal with the rule code and the
+    `suggested_fix` as the tool output (`on_block="raise"` stops the run).
+    Approved query (masked columns, a `LIMIT` bound): the function runs that
+    query instead of the original. `FLAGGED` / `MONITORED`: it runs, and the
+    verdict is logged and passed to `on_verdict`. Vericto's own errors
+    (unavailable under fail-closed, configuration) stop the run and are never
+    turned into model text; the function's own errors follow
+    `failure_error_function` as in `function_tool`. Every other `function_tool`
+    argument passes through.
+  - `vericto_tool_input_guardrail(dialect=..., ...)`: a native
+    `ToolInputGuardrail` for SQL tools you do not write (a `FunctionTool`, an MCP
+    server's tools, with `tools=` to pick the SQL ones). It rejects a blocked
+    call with the same refusal (`on_block="raise"`: the SDK's tripwire). The
+    SDK's tool guardrails cannot change the arguments, so it also rejects a call
+    that has an approved query, and gives the model that query to send again.
+    Every other call is allowed, with the `Verdict` as `output_info`.
+  - Both go through `Vericto.enforce()`: fail mode, cache, placeholder mapping
+    and `on_verdict` behave as in every other wrapper. In `async` tools and in
+    the guardrail the check runs in a worker thread. `context=` and `end_user=`
+    (a value or a callable read per call) go with every evaluation.
+- `examples/openai_agents_sql_tool.py`.
+- CI: an `Integration (openai-agents)` job runs `tests/test_openai_agents.py`
+  against the real `Runner` (scripted model, no OpenAI calls, an MCP stdio
+  server for the guardrail), with line and branch coverage of the module
+  (fails under 80%), and type-checks it against the real package. Pins in
+  `ci/requirements-openai-agents.txt`.
+
+### Changed
+
+- `docs/frameworks/openai-agents.md` now documents the module instead of the
+  hand-written pattern; README integrations table, install list and package
+  description list the OpenAI Agents SDK as an official integration.
+- `uv.lock` resolves the new extra (`openai-agents` 0.24.0, `openai` 3.42.0,
+  `mcp` 2.3.0). Since `openai-agents` requires `websockets<17`, the
+  `websockets` used by other extras also resolves to 16.1.1 instead of 17.3.
+  The dev environment does not install it.
+- Package keywords no longer include `firewall`, and the README's fail-open note
+  says "guardrails", and so does `VerictoCheckSQLTool`'s description (the text
+  the model reads: "Vericto, database guardrails for AI agents" instead of "the
+  SQL firewall"). Vericto is database guardrails for AI agents.
+
 ## [0.5.1] - 2026-10-24
 
 Documentation and package metadata release. No behavior change.
@@ -412,6 +464,7 @@ the Vericto Runtime API (`POST /api/v1/proxy/query`).
 - The Vericto engine does not evaluate the `sqlite` dialect yet: the SQLite
   wrappers raise `VerictoUnsupportedDialect` until the server lists it.
 
+[0.6.0]: https://github.com/vericto/vericto-python/releases/tag/v0.6.0
 [0.5.1]: https://github.com/vericto/vericto-python/releases/tag/v0.5.1
 [0.5.0]: https://github.com/vericto/vericto-python/releases/tag/v0.5.0
 [0.4.1]: https://github.com/vericto/vericto-python/releases/tag/v0.4.1
