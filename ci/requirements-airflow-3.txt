@@ -3,5 +3,5 @@
 apache-airflow==3.3.2
 apache-airflow-providers-common-sql==2.1.1
 apache-airflow-providers-sqlite==4.3.3
-pytest==9.1.1
+pytest==9.2.0
 pytest-httpserver==1.2.0

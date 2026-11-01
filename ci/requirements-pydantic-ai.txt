@@ -3,6 +3,6 @@
 pydantic-ai-slim[mcp]==2.64.0
 fastmcp-slim==4.1.4
 mcp==2.3.0
-pytest==9.1.1
+pytest==9.2.0
 pytest-httpserver==1.2.0
 werkzeug==3.1.9
