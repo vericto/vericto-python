@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.33.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -36,7 +36,7 @@ sqlalchemy = ["sqlalchemy>=1.4"]
 # Integrations. Tested versions: README.
 langchain = [
   "langchain-community>=0.3,<0.5",
-  "langchain-core>=0.3,<2",
+  "langchain-core>=1.7.1,<2",
   "sqlalchemy>=1.4",
 ]
 llamaindex = ["llama-index-core>=0.12,<0.15", "sqlalchemy>=1.4"]
@@ -62,13 +62,13 @@ Issues = "https://github.com/vericto/vericto-python/issues"
 
 [dependency-groups]
 dev = [
-  "pytest>=8.3",
+  "pytest>=9.2.0",
   "pytest-httpserver>=1.1",
-  "ruff>=0.15",
-  "mypy>=1.14",
+  "ruff>=0.17.3",
+  "mypy>=2.4.1",
   "sqlalchemy>=2.0",
   "snowflake-connector-python>=3.12",
-  "coverage[toml]>=7.10",
+  "coverage[toml]>=7.17.0",
 ]
 
 [tool.hatch.version]
