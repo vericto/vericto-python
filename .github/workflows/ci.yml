@@ -50,7 +50,7 @@ jobs:
       fail-fast: false
       matrix:
         # Oldest supported, a middle one, and the newest.
-        python: ["3.10", "3.12", "3.14"]
+        python: ["3.11", "3.12", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,7 +63,7 @@ jobs:
       - name: Test, with line and branch coverage (fails under 80%)
         env:
           # Covered in their own "extras" job: their framework is not installed here.
-          INTEGRATIONS: "*/vericto/langchain.py,*/vericto/llamaindex.py,*/vericto/openai_agents.py,*/vericto/airflow/*"
+          INTEGRATIONS: "*/vericto/langchain.py,*/vericto/llamaindex.py,*/vericto/openai_agents.py,*/vericto/pydantic_ai.py,*/vericto/airflow/*"
         run: |
           uv run coverage run -m pytest
           uv run coverage report --omit="$INTEGRATIONS"
@@ -98,6 +98,13 @@ jobs:
             covers: src/vericto/openai_agents.py
             # No SQLAlchemy in this extra: _agent.py is type-checked by the lint job and the other extras.
             typecheck: src/vericto/openai_agents.py tests/test_openai_agents.py
+          - extra: pydantic-ai
+            python: "3.13"
+            requirements: ci/requirements-pydantic-ai.txt
+            tests: tests/test_pydantic_ai.py
+            covers: src/vericto/pydantic_ai.py
+            # No SQLAlchemy in this extra either: _agent.py is type-checked by the lint job and the other extras.
+            typecheck: src/vericto/pydantic_ai.py tests/test_pydantic_ai.py
           - extra: dbt
             python: "3.13"
             requirements: ""

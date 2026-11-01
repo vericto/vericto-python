@@ -6,6 +6,71 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-01
+
+Python 3.11 or later, and an official integration for Pydantic AI. On Python 3.10,
+stay on 0.6.x.
+
+### Upgrade notes
+
+- **Python 3.11 or later is required** (`requires-python = ">=3.11"`). Python
+  3.10 reached end of life in October 2026. On Python 3.10, stay on 0.6.x
+  (`pip install "vericto<0.7"`; pip on 3.10 already skips 0.7.0, which declares
+  `>=3.11`). Nothing else changes for code that runs on 3.11 or later.
+
+### Added
+
+- **`vericto.pydantic_ai`** (extra `vericto[pydantic-ai]`,
+  `pydantic-ai-slim>=2.0,<3`, tested with 2.64.0 and 2.0.0). `VerictoToolset`
+  is a Pydantic AI `WrapperToolset`: it wraps any toolset (a `FunctionToolset`,
+  an `MCPToolset`, a combined or prefixed one) and overrides `call_tool`, so
+  Vericto checks the SQL argument (`argument=`, default `"query"`) of every call
+  to a SQL tool (`tools=`, default all) before the wrapped tool runs.
+  `BLOCKED`: the tool is not called, and the call raises `ModelRetry` with the
+  refusal (rule code, `suggested_fix`), so the model can correct its query
+  (`on_block="return"` makes the refusal the tool result; `on_block="raise"`
+  stops the run with `VerictoBlocked`). Approved query (masked columns, a
+  `LIMIT` bound): the tool runs that query instead of the original. `FLAGGED` /
+  `MONITORED`: it runs, and the verdict is logged and passed to `on_verdict`.
+  Vericto's own errors (unavailable under fail-closed, configuration) stop the
+  run and are never turned into model text. A tool in scope without the SQL
+  parameter in its schema stops the run with `VerictoConfigError` before any
+  tool runs. The check goes through `Vericto.enforce()` in a worker thread;
+  `context=` and `end_user=` (a value or a callable read per call) go with every
+  evaluation.
+- `examples/pydantic_ai_sql_toolset.py`.
+- CI: an `Integration (pydantic-ai)` job runs `tests/test_pydantic_ai.py`
+  against the real `Agent` (scripted `FunctionModel`, no model calls, an
+  `MCPToolset` over stdio), with line and branch coverage of the module (fails
+  under 80%), and type-checks it against the real package. Pins in
+  `ci/requirements-pydantic-ai.txt`.
+
+### Changed
+
+- `docs/frameworks/pydantic-ai.md` now documents the module instead of the
+  hand-written pattern; the README integrations table, install list, Spanish
+  section and package description list Pydantic AI as an official integration.
+  The guide's examples are tested with pydantic-ai-slim 2.64.0 (was 2.60.0).
+- The `on_block` error message lists the accepted values
+  (`on_block must be one of 'return', 'raise', got ...`).
+- `uv.lock` resolves the new extra (`pydantic-ai-slim` 2.64.0,
+  `pydantic-graph` 2.64.0). The dev environment does not install it.
+
+### Removed
+
+- Python 3.10: the trove classifier and the `Test (Python 3.10)` CI job (the
+  test matrix is now 3.11, 3.12 and 3.14). Ruff and mypy target 3.11. The code
+  had no path or fallback that existed only for 3.10, so none was removed.
+
+### Security
+
+- `uv.lock` no longer has a Python 3.10 resolution branch, and with it go the
+  only vulnerable versions it pinned: Pillow 12.3.0 (via `llama-index-core`),
+  filelock 3.32.7 (via `snowflake-connector-python`) and dnspython 2.8.0. The
+  lock now resolves Pillow 13.0.0 only, dnspython 2.9.0 only, and no filelock
+  at all. These come from extras and the dev environment; the base install
+  still depends on `urllib3` only.
+
 ## [0.6.0] - 2026-10-31
 
 An official integration for the OpenAI Agents SDK. No change for existing code.
@@ -464,6 +529,7 @@ the Vericto Runtime API (`POST /api/v1/proxy/query`).
 - The Vericto engine does not evaluate the `sqlite` dialect yet: the SQLite
   wrappers raise `VerictoUnsupportedDialect` until the server lists it.
 
+[0.7.0]: https://github.com/vericto/vericto-python/releases/tag/v0.7.0
 [0.6.0]: https://github.com/vericto/vericto-python/releases/tag/v0.6.0
 [0.5.1]: https://github.com/vericto/vericto-python/releases/tag/v0.5.1
 [0.5.0]: https://github.com/vericto/vericto-python/releases/tag/v0.5.0

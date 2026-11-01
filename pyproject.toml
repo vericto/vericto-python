@@ -5,20 +5,19 @@ build-backend = "hatchling.build"
 [project]
 name = "vericto"
 dynamic = ["version"]
-description = "Official Vericto SDK for Python: database guardrails for AI agents, check SQL before it runs. Wrappers for snowflake-connector-python, sqlite3, SQLAlchemy and any DB-API driver; integrations for LangChain, LlamaIndex, the OpenAI Agents SDK, dbt and Airflow."
+description = "Official Vericto SDK for Python: database guardrails for AI agents, check SQL before it runs. Wrappers for snowflake-connector-python, sqlite3, SQLAlchemy and any DB-API driver; integrations for LangChain, LlamaIndex, the OpenAI Agents SDK, Pydantic AI, dbt and Airflow."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [{ name = "Vericto", email = "security@vericto.com" }]
-keywords = ["sql", "security", "guardrails", "database-guardrails", "ai-guardrails", "snowflake", "sqlite", "sqlalchemy", "ai-agents", "langchain", "llamaindex", "openai-agents", "dbt", "airflow", "vericto"]
+keywords = ["sql", "security", "guardrails", "database-guardrails", "ai-guardrails", "snowflake", "sqlite", "sqlalchemy", "ai-agents", "langchain", "llamaindex", "openai-agents", "pydantic-ai", "dbt", "airflow", "vericto"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -42,6 +41,7 @@ langchain = [
 ]
 llamaindex = ["llama-index-core>=0.12,<0.15", "sqlalchemy>=1.4"]
 openai-agents = ["openai-agents>=0.22,<0.25"]
+pydantic-ai = ["pydantic-ai-slim>=2.0,<3"]
 # Airflow 3 only: Airflow 2 is end-of-life upstream (README, "Airflow").
 airflow = [
   "apache-airflow>=3.0; python_version < '3.15'",
@@ -98,7 +98,7 @@ show_missing = true
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -106,16 +106,17 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
 ignore = [
   "UP006", "UP007", "UP035", "UP045",  # keep typing.Optional/List: the code base's style
   "S311",                              # random is for retry jitter, not security
+  "UP042",                             # Decision stays (str, Enum): StrEnum would change str(Decision.X)
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106", "S608"]
 # Optional-extra tests import the framework after pytest.importorskip().
-"tests/test_{langchain,llamaindex,openai_agents,airflow}.py" = ["E402"]
+"tests/test_{langchain,llamaindex,openai_agents,pydantic_ai,airflow}.py" = ["E402"]
 "examples/**" = ["S101", "S105", "S608"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 strict = true
 files = ["src/vericto", "tests", "examples", "scripts"]
 
@@ -127,11 +128,11 @@ ignore_missing_imports = true
 # without them mypy sees their classes as Any. Their own CI jobs type-check these
 # modules against the real packages (see .github/workflows/ci.yml).
 [[tool.mypy.overrides]]
-module = ["langchain_community.*", "langchain_core.*", "langchain_classic.*", "langchain_openai.*", "llama_index.*", "agents.*", "openai.*", "airflow.*", "pydantic.*"]
+module = ["langchain_community.*", "langchain_core.*", "langchain_classic.*", "langchain_openai.*", "llama_index.*", "agents.*", "openai.*", "pydantic_ai.*", "fastmcp.*", "airflow.*", "pydantic.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["vericto.langchain", "vericto.llamaindex", "vericto.openai_agents", "vericto.airflow", "vericto.airflow.*", "tests.test_langchain", "tests.test_llamaindex", "tests.test_openai_agents", "tests.test_airflow"]
+module = ["vericto.langchain", "vericto.llamaindex", "vericto.openai_agents", "vericto.pydantic_ai", "vericto.airflow", "vericto.airflow.*", "tests.test_langchain", "tests.test_llamaindex", "tests.test_openai_agents", "tests.test_pydantic_ai", "tests.test_airflow"]
 disallow_subclassing_any = false
 disallow_any_unimported = false
 warn_return_any = false

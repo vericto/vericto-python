@@ -22,7 +22,7 @@ from agents.models.interface import Model
 from agents.usage import Usage
 from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
 
-from tests.conftest import FakeVericto, blocked, flagged, masked
+from tests.conftest import API_KEY, FakeVericto, blocked, flagged, masked
 from vericto import (
     Decision,
     Verdict,
@@ -327,7 +327,7 @@ def test_non_string_sql_is_a_type_error(fake: FakeVericto, guard: Vericto) -> No
 
 
 def test_default_guard_from_the_environment(fake: FakeVericto, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("VERICTO_API_KEY", "vtro_test_0123456789abcdef")
+    monkeypatch.setenv("VERICTO_API_KEY", API_KEY)
     monkeypatch.setenv("VERICTO_API_URL", fake.url)
     monkeypatch.setenv("VERICTO_DATABASE_ID", "7c9e6679-7425-40de-944b-e07fc1f90ae7")
     tool = vericto_sql_tool(lambda query: "ran", dialect="sqlite", name_override="run_sql")
