@@ -165,7 +165,9 @@ def test_importing_vericto_never_imports_a_framework() -> None:
     code = (
         "import sys, vericto, vericto.guard, vericto.dbapi\n"
         "loaded = {name.split('.')[0] for name in sys.modules}\n"
-        "found = loaded & {'agents', 'openai', 'langchain_core', 'langchain_community', 'llama_index', 'airflow'}\n"
+        "frameworks = {'agents', 'openai', 'pydantic_ai', 'langchain_core', 'langchain_community',\n"
+        "              'llama_index', 'airflow'}\n"
+        "found = loaded & frameworks\n"
         "assert not found, found\n"
     )
     subprocess.run([sys.executable, "-c", code], check=True)  # noqa: S603

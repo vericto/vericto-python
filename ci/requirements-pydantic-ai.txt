@@ -1,0 +1,8 @@
+# Pinned versions the Pydantic AI integration is tested with (CI "extras" job).
+# The [mcp] extra brings FastMCP's client, for the MCPToolset test.
+pydantic-ai-slim[mcp]==2.64.0
+fastmcp-slim==4.1.4
+mcp==2.3.0
+pytest==9.1.1
+pytest-httpserver==1.2.0
+werkzeug==3.1.9

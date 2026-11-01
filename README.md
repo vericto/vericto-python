@@ -1,11 +1,11 @@
-Official Vericto SDK for Python: database guardrails for AI agents. Check SQL before it runs (snowflake-connector-python, sqlite3, SQLAlchemy, any DB-API driver, LangChain, LlamaIndex, the OpenAI Agents SDK, dbt and Airflow).
+Official Vericto SDK for Python: database guardrails for AI agents. Check SQL before it runs (snowflake-connector-python, sqlite3, SQLAlchemy, any DB-API driver, LangChain, LlamaIndex, the OpenAI Agents SDK, Pydantic AI, dbt and Airflow).
 
 # vericto (Python)
 
 > Check every SQL statement with [Vericto](https://vericto.com) **before** it runs:
 > thin wrappers for `snowflake-connector-python`, `sqlite3`, SQLAlchemy and any
 > DB-API driver, and integrations for LangChain, LlamaIndex, the OpenAI Agents SDK,
-> dbt and Airflow.
+> Pydantic AI, dbt and Airflow.
 
 Vericto puts database guardrails between AI agents and your database: it parses
 each statement into an AST and evaluates it against your workspace's rules
@@ -34,6 +34,7 @@ pip install "vericto[sqlalchemy]"    # + SQLAlchemy
 pip install "vericto[langchain]"     # LangChain SQL agents and chains
 pip install "vericto[llamaindex]"    # LlamaIndex text-to-SQL
 pip install "vericto[openai-agents]" # OpenAI Agents SDK SQL tools and tool guardrails
+pip install "vericto[pydantic-ai]"   # Pydantic AI toolsets (function tools, MCP servers)
 pip install "vericto[airflow]"       # Airflow 3 operator and cluster policy
 pip install "vericto[dbt]"           # vericto-dbt: CI checks for dbt projects (no extra dependency)
 ```
@@ -436,13 +437,13 @@ Runtime API stand-in, with scripted models) and the versions it was tested with.
 | Django | Pattern: `connection.execute_wrapper` | [docs/frameworks/django.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/django.md) | Django 6.1.2 |
 | CrewAI | Pattern: a guarded `@tool` | [docs/frameworks/crewai.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/crewai.md) | crewai 1.15.30 |
 | OpenAI Agents SDK (`function_tool`, tool input guardrails, MCP server tools) | Official: `vericto.openai_agents` (`vericto[openai-agents]`) | [docs/frameworks/openai-agents.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/openai-agents.md) | openai-agents 0.24.0 |
-| Pydantic AI | Pattern: a guarded tool raising `ModelRetry` | [docs/frameworks/pydantic-ai.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/pydantic-ai.md) | pydantic-ai-slim 2.60.0 |
+| Pydantic AI (`FunctionToolset`, `MCPToolset`, any toolset) | Official: `vericto.pydantic_ai` (`vericto[pydantic-ai]`) | [docs/frameworks/pydantic-ai.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/pydantic-ai.md) | pydantic-ai-slim 2.64.0 |
 | Vanna 2.x | Pattern: a guarded `SqlRunner` | [docs/frameworks/vanna.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/vanna.md) | vanna 2.0.2 |
 | dbt | Official: `vericto-dbt check` (`vericto[dbt]`) | [dbt](#dbt) | dbt manifest v12 fixtures (no dbt runtime) |
 | Airflow 3 | Official: `vericto.airflow` (`vericto[airflow]`) | [Airflow](#airflow) | Airflow 3.3.2 (common-sql 2.1.1), official constraints |
 | LangChain.js | `@vericto/sdk/langchain` (Node) | [vericto-node](https://github.com/vericto/vericto-node) | see vericto-node |
 
-All on Python 3.13 with vericto 0.5.0 (the OpenAI Agents SDK with 0.6.0). The pattern in one line: call
+All on Python 3.13 with vericto 0.5.0 (the OpenAI Agents SDK with 0.6.0, Pydantic AI with 0.7.0). The pattern in one line: call
 `guard.prepare(sql, dialect)` right before your code executes `sql`, execute what
 it returns, hand a `VerictoBlocked` back to the model as text (rule and
 `suggested_fix`), and let `VerictoUnavailable` / `VerictoConfigError` propagate so
@@ -553,6 +554,43 @@ guardrail = vericto_tool_input_guardrail(dialect="postgres", argument="sql", too
   (`agents.exceptions.UserError` caused by `VerictoUnavailable`), never model
   text; `fail_mode="open"` runs unevaluated. A configuration error stops the run
   in both modes.
+
+### Pydantic AI
+
+Full guide: [docs/frameworks/pydantic-ai.md](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/pydantic-ai.md).
+
+<!-- docs-check: skip a fragment (pool is your database pool); the guide's examples run -->
+```python
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.mcp import MCPToolset
+from vericto.pydantic_ai import VerictoToolset
+
+
+async def run_sql(query: str) -> str:
+    """Run one read-only SQL query and return the rows."""
+    return str(await pool.fetch(query))
+
+
+# A WrapperToolset: Vericto checks the SQL argument before the wrapped tool runs.
+sql_tools = VerictoToolset(FunctionToolset([run_sql]), dialect="postgres")
+agent = Agent("openai:gpt-5", toolsets=[sql_tools])
+
+# An MCP server's tools: name the SQL ones, the others run unchecked.
+mcp_tools = VerictoToolset(
+    MCPToolset("http://localhost:8000/mcp"), dialect="postgres", argument="sql", tools=["execute_sql"]
+)
+```
+
+- **BLOCKED**: the tool is not called; the call raises `ModelRetry` with the
+  refusal (rule code, reason, `suggested_fix`), so the model can correct its
+  query. `on_block="return"` makes the refusal the tool result instead;
+  `on_block="raise"` stops the run with `VerictoBlocked`.
+- **approved_query** (mask, `LIMIT` bound): the tool runs that query instead of
+  the original.
+- **FLAGGED / MONITORED**: run, logged, passed to `on_verdict`.
+- **Vericto unavailable**: `fail_mode="closed"` (default) stops the run with
+  `VerictoUnavailable`, never model text; `fail_mode="open"` runs unevaluated. A
+  configuration error stops the run in both modes.
 
 ### dbt
 
@@ -686,12 +724,12 @@ uv venv /tmp/vericto-docs-lc && uv pip install --python /tmp/vericto-docs-lc -e 
 CI measures line and branch coverage and fails a job under **80%**
 (`fail_under` in `pyproject.toml`). The core job reports every module except the
 framework integrations, whose framework it does not install; each integration job
-reports its own module (`langchain.py`, `llamaindex.py`, `openai_agents.py`, `dbt.py`, `airflow/`).
+reports its own module (`langchain.py`, `llamaindex.py`, `openai_agents.py`, `pydantic_ai.py`, `dbt.py`, `airflow/`).
 The same checks locally:
 
 ```bash
 uv run coverage run -m pytest
-uv run coverage report --omit="*/vericto/langchain.py,*/vericto/llamaindex.py,*/vericto/openai_agents.py,*/vericto/airflow/*"
+uv run coverage report --omit="*/vericto/langchain.py,*/vericto/llamaindex.py,*/vericto/openai_agents.py,*/vericto/pydantic_ai.py,*/vericto/airflow/*"
 uv pip install --python /tmp/vericto-lc coverage==7.17.0
 /tmp/vericto-lc/bin/python -m coverage run -m pytest tests/test_langchain.py
 /tmp/vericto-lc/bin/python -m coverage report --include=src/vericto/langchain.py
@@ -810,11 +848,16 @@ la regla y la corrección sugerida en vez de una excepción), `vericto.openai_ag
 (`vericto[openai-agents]`: `vericto_sql_tool`, un `function_tool` que valida el SQL
 antes de ejecutarlo y ejecuta la consulta aprobada por Vericto cuando la hay, y
 `vericto_tool_input_guardrail`, un guardrail de entrada nativo para herramientas
-que no escribes, como las de un servidor MCP), `vericto.sqlalchemy`,
+que no escribes, como las de un servidor MCP), `vericto.pydantic_ai`
+(`vericto[pydantic-ai]`: `VerictoToolset`, un `WrapperToolset` que envuelve
+cualquier toolset, incluido un `MCPToolset`, y valida el SQL de cada llamada antes
+de ejecutarla; si se bloquea, el modelo recibe la regla y la corrección sugerida
+con `ModelRetry`, y si Vericto devuelve una consulta aprobada se ejecuta esa),
+`vericto.sqlalchemy`,
 `vericto.wrap` para cualquier driver DB-API, `vericto-dbt check` (valida el SQL
 compilado de un proyecto dbt en CI con la API de CI-check, con salida JSON/SARIF)
-y `vericto.airflow` (operador y política de clúster). Para Django, CrewAI,
-Pydantic AI y Vanna no hay módulo de vericto: las guías de
+y `vericto.airflow` (operador y política de clúster). Para Django, CrewAI
+y Vanna no hay módulo de vericto: las guías de
 [docs/frameworks](https://github.com/vericto/vericto-python/blob/main/docs/frameworks/README.md) muestran el patrón (llamar a
 `guard.prepare(sql, dialecto)` justo antes de ejecutar y ejecutar lo que
 devuelve), con ejemplos probados y las versiones usadas. Ver

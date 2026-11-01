@@ -72,12 +72,10 @@ from agents import FunctionTool, RunContextWrapper, function_tool
 from agents.tool import default_tool_error_function
 from agents.tool_guardrails import ToolGuardrailFunctionOutput, ToolInputGuardrail, ToolInputGuardrailData
 
-from ._agent import block_message, check_on_block, check_sources
-from .dbapi import _default_guard
-from .dialects import normalize_dialect
+from ._agent import ToolCheck, block_message
 from .errors import VerictoBlocked, VerictoConfigError, VerictoError
 from .guard import Vericto
-from .policy_context import ContextSource, EndUserSource, resolve
+from .policy_context import ContextSource, EndUserSource
 from .verdict import Verdict
 
 OnBlock = Literal["return", "raise"]
@@ -96,41 +94,6 @@ def approved_query_message(verdict: Verdict) -> str:
     if verdict.event_id:
         lines.append(f"(Vericto event {verdict.event_id})")
     return "\n".join(lines)
-
-
-class _Check:
-    """The settings shared by the tool wrapper and the guardrail."""
-
-    def __init__(
-        self,
-        guard: Optional[Vericto],
-        dialect: str,
-        argument: str,
-        on_block: str,
-        context: ContextSource,
-        end_user: EndUserSource,
-        paramstyle: Optional[str],
-    ) -> None:
-        if not isinstance(argument, str) or not argument:
-            raise VerictoConfigError("argument must be the name of the tool's SQL parameter.")
-        self.on_block = check_on_block(on_block)
-        check_sources(context, end_user)
-        self.guard = _default_guard(guard)
-        self.dialect = normalize_dialect(dialect)
-        self.argument = argument
-        self.context = context
-        self.end_user = end_user
-        self.paramstyle = paramstyle
-
-    def enforce(self, sql: str) -> Verdict:
-        """:meth:`Vericto.enforce`: raises on a block, returns the verdict otherwise."""
-        return self.guard.enforce(
-            sql,
-            self.dialect,
-            paramstyle=self.paramstyle,
-            context=resolve(self.context),
-            end_user=resolve(self.end_user),
-        )
 
 
 def _vericto_failure_function(fallback: Optional[ToolErrorFunction]) -> ToolErrorFunction:
@@ -152,7 +115,7 @@ def _vericto_failure_function(fallback: Optional[ToolErrorFunction]) -> ToolErro
     return failure
 
 
-def _guarded(func: Callable[..., Any], check: _Check) -> Callable[..., Any]:
+def _guarded(func: Callable[..., Any], check: ToolCheck) -> Callable[..., Any]:
     """``func``, which Vericto checks (and gives the approved query) before it runs."""
     signature = inspect.signature(func)
     if check.argument not in signature.parameters:
@@ -281,7 +244,7 @@ def vericto_sql_tool(
     Returns:
         an ``agents.FunctionTool`` (or a decorator that makes one).
     """
-    check = _Check(guard, dialect, argument, on_block, context, end_user, paramstyle)
+    check = ToolCheck(guard, dialect, argument, on_block, context, end_user, paramstyle)
     if failure_error_function is None:
         on_failure: Optional[ToolErrorFunction] = None
     else:
@@ -344,7 +307,7 @@ def vericto_tool_input_guardrail(
         context, end_user: sent with every evaluation, as in :func:`vericto_sql_tool`.
         name: the guardrail name the SDK reports.
     """
-    check = _Check(guard, dialect, argument, on_block, context, end_user, None)
+    check = ToolCheck(guard, dialect, argument, on_block, context, end_user, None)
     scope = None if tools is None else frozenset(tools)
 
     async def vericto_guardrail(data: ToolInputGuardrailData) -> ToolGuardrailFunctionOutput:

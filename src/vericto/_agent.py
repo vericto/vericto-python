@@ -1,16 +1,19 @@
 # SPDX-FileCopyrightText: 2026 Vericto S.A.S.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared pieces of the LLM-framework integrations (LangChain, LlamaIndex).
+"""Shared pieces of the LLM-framework integrations (LangChain, LlamaIndex, the
+OpenAI Agents SDK, Pydantic AI).
 
 * :func:`block_message`: the text an agent receives instead of rows when Vericto
   blocks its query, written so the model can correct itself.
 * :func:`describe_verdict`: a one-paragraph verdict for check tools.
+* :class:`ToolCheck`: the settings of a SQL tool check (guard, dialect, SQL
+  argument, ``on_block``, policy context) and :meth:`Vericto.enforce` with them.
 * :class:`EngineGate`: checks the SQL an integration sends through a SQLAlchemy
   engine, and only that SQL (not schema reflection, not the framework's own
   ``SET search_path``), so a query costs one evaluation.
 
-Nothing here imports LangChain or LlamaIndex.
+Nothing here imports a framework.
 """
 
 from __future__ import annotations
@@ -19,6 +22,8 @@ import contextvars
 from contextlib import contextmanager
 from typing import Any, Collection, Iterator, Optional
 
+from .dbapi import _default_guard
+from .dialects import normalize_dialect
 from .errors import VerictoBlocked, VerictoConfigError
 from .guard import Vericto
 from .policy_context import ContextSource, EndUserSource, policy_fields, resolve
@@ -27,10 +32,11 @@ from .verdict import Decision, Verdict
 ON_BLOCK = ("return", "raise")
 
 
-def check_on_block(value: str) -> str:
+def check_on_block(value: str, allowed: Collection[str] = ON_BLOCK) -> str:
     mode = str(value).strip().lower()
-    if mode not in ON_BLOCK:
-        raise VerictoConfigError(f"on_block must be 'return' or 'raise', got {value!r}.")
+    if mode not in allowed:
+        choices = ", ".join(repr(choice) for choice in allowed)
+        raise VerictoConfigError(f"on_block must be one of {choices}, got {value!r}.")
     return mode
 
 
@@ -40,6 +46,43 @@ def check_sources(context: ContextSource, end_user: EndUserSource) -> None:
         None if callable(context) else context,
         None if callable(end_user) else end_user,
     )
+
+
+class ToolCheck:
+    """The settings shared by the agent-SDK tool integrations, and the check itself."""
+
+    def __init__(
+        self,
+        guard: Optional[Vericto],
+        dialect: str,
+        argument: str,
+        on_block: str,
+        context: ContextSource,
+        end_user: EndUserSource,
+        paramstyle: Optional[str],
+        *,
+        allowed_on_block: Collection[str] = ON_BLOCK,
+    ) -> None:
+        if not isinstance(argument, str) or not argument:
+            raise VerictoConfigError("argument must be the name of the tool's SQL parameter.")
+        self.on_block = check_on_block(on_block, allowed_on_block)
+        check_sources(context, end_user)
+        self.guard = _default_guard(guard)
+        self.dialect = normalize_dialect(dialect)
+        self.argument = argument
+        self.context = context
+        self.end_user = end_user
+        self.paramstyle = paramstyle
+
+    def enforce(self, sql: str) -> Verdict:
+        """:meth:`Vericto.enforce`: raises on a block, returns the verdict otherwise."""
+        return self.guard.enforce(
+            sql,
+            self.dialect,
+            paramstyle=self.paramstyle,
+            context=resolve(self.context),
+            end_user=resolve(self.end_user),
+        )
 
 
 def _rule_label(verdict: Verdict) -> str:
