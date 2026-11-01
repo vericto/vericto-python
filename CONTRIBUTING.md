@@ -38,7 +38,7 @@ Contributions that belong elsewhere:
 ```bash
 git clone https://github.com/<you>/vericto-python.git
 cd vericto-python
-uv sync                      # Python 3.10+; uv.lock pins the dev tools
+uv sync                      # Python 3.11+; uv.lock pins the dev tools
 uv run pytest
 ```
 
@@ -113,7 +113,7 @@ when they cut a release.
 
 ## Pull request acceptance criteria
 
-- ✅ Required checks pass: `Lint and type-check`, `Test (Python 3.10)`,
+- ✅ Required checks pass: `Lint and type-check`, `Test (Python 3.11)`,
   `Test (Python 3.12)`, `Test (Python 3.14)`, `Build sdist and wheel` and
   `gitleaks`. The `Integration (...)` and `Docs examples (...)` jobs run on
   every pull request too and should be green.

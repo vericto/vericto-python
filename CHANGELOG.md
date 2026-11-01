@@ -6,6 +6,28 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **Python 3.11 or later is required** (`requires-python = ">=3.11"`). Python
+  3.10 reached end of life in October 2026. On Python 3.10, stay on 0.6.x
+  (`pip install "vericto<0.7"`; pip on 3.10 already skips 0.7.0, which declares
+  `>=3.11`). Nothing else changes for code that runs on 3.11 or later.
+
+### Removed
+
+- Python 3.10: the trove classifier and the `Test (Python 3.10)` CI job (the
+  test matrix is now 3.11, 3.12 and 3.14). Ruff and mypy target 3.11. The code
+  had no path or fallback that existed only for 3.10, so none was removed.
+
+### Security
+
+- `uv.lock` no longer has a Python 3.10 resolution branch, and with it go the
+  only vulnerable versions it pinned: Pillow 12.3.0 (via `llama-index-core`),
+  filelock 3.32.7 (via `snowflake-connector-python`) and dnspython 2.8.0. The
+  lock now resolves Pillow 13.0.0 only, dnspython 2.9.0 only, and no filelock
+  at all. These come from extras and the dev environment; the base install
+  still depends on `urllib3` only.
+
 ## [0.6.0] - 2026-10-31
 
 An official integration for the OpenAI Agents SDK. No change for existing code.

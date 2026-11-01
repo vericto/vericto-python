@@ -21,7 +21,8 @@ It is a thin client of the **Vericto Runtime API** (`POST /api/v1/proxy/query`).
 Evaluation happens in your Vericto workspace; nothing is evaluated locally in this
 release (see [Evaluators](#evaluators)).
 
-- Python 3.10+, typed (`py.typed`), one dependency (`urllib3`).
+- Python 3.11+, typed (`py.typed`), one dependency (`urllib3`). Python 3.10 reached
+  end of life in October 2026: on 3.10, stay on 0.6.x (`pip install "vericto<0.7"`).
 - Drivers are optional extras; importing `vericto` never imports a driver.
 
 ## Install
@@ -641,7 +642,7 @@ def task_policy(task):
 ## Development
 
 ```bash
-uv sync                      # Python 3.10+; uv.lock pins the dev tools
+uv sync                      # Python 3.11+; uv.lock pins the dev tools
 uv run ruff check . && uv run ruff format --check .
 uv run mypy
 uv run pytest
@@ -727,7 +728,7 @@ variables are set and never run in CI.
 | `VERICTO_API_URL` | `https://api-staging.vericto.com` (or another server that lists `sqlite`) |
 | `VERICTO_DATABASE_ID` | the id of a database of dialect `sqlite` in that workspace |
 
-On the host (Python 3.10+, the SQLite file goes to pytest's temporary directory):
+On the host (Python 3.11+, the SQLite file goes to pytest's temporary directory):
 
 ```bash
 export VERICTO_LIVE_SQLITE=1 VERICTO_API_URL=https://api-staging.vericto.com
@@ -825,7 +826,9 @@ por intento; con los valores por defecto (5 s y 2 reintentos), Vericto responde 
 falla cerrado en unos 16 s como máximo. Una variable `VERICTO_*` vacía cuenta como
 no definida (desde 0.4.1 también `VERICTO_FAIL_MODE`).
 
-Desde 0.3.0, `vericto` requiere Python 3.10+ y `vericto[airflow]` requiere
+Desde 0.7.0, `vericto` requiere Python 3.11+: Python 3.10 llegó al fin de su ciclo
+de vida en octubre de 2026, y quienes lo usen pueden seguir en 0.6.x
+(`pip install "vericto<0.7"`). Desde 0.3.0, `vericto[airflow]` requiere
 Airflow 3: Airflow 2 llegó al fin de su ciclo de vida
 ([versiones soportadas](https://airflow.apache.org/docs/apache-airflow/stable/installation/supported-versions.html))
 y ya no se prueba. Quienes usen Python 3.9 o Airflow 2 pueden seguir instalando
