@@ -1,5 +1,5 @@
 # Pinned versions the OpenAI Agents SDK integration is tested with (CI "extras" job).
 openai-agents==0.24.0
-pytest==9.1.1
+pytest==9.2.0
 pytest-httpserver==1.2.0
 werkzeug==3.1.9
