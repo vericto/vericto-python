@@ -485,3 +485,16 @@ def test_an_mcp_toolset(fake: FakeVericto, guard: Vericto, tmp_path: Any) -> Non
     assert k2 == "return" and ran == f"ran {rewrite}"
     assert k3 == "return" and pong == "pong"
     assert fake.queries() == ["DELETE FROM users", "SELECT email FROM users"]  # ping is not a SQL tool: not checked
+
+
+def test_offline_guard(offline_guard: Vericto, db: sqlite3.Connection) -> None:
+    ran: List[str] = []
+    toolset: VerictoToolset[Any] = VerictoToolset(
+        sql_tools(db, ran), dialect="sqlite", guard=offline_guard, on_block="return"
+    )
+    script = run(toolset, "SELECT email FROM users WHERE id = 1", "DELETE FROM users")
+    assert script.seen[0] == ("return", "[('ana@example.com',)]")
+    _, refusal = script.seen[1]
+    assert "VERICTO-001" in refusal
+    assert ran == ["SELECT email FROM users WHERE id = 1"]
+    assert _count(db) == 2

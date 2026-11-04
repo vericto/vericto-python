@@ -58,7 +58,12 @@ class Verdict:
         parse_error: the parser's message, on ``PARSE_ERROR``.
         event_id: the audit-trail event id, to look the evaluation up in Vericto.
         ruleset_version: the ruleset the verdict was computed under, when the server
-            reports it (the cache drops every entry when it changes).
+            reports it (the cache drops every entry when it changes). Offline:
+            ``standard@engine-<version>``.
+        mode: ``"online"`` (the Runtime API evaluated it) or ``"offline"`` (the local
+            engine of the ``vericto`` CLI did, with the standard rules).
+        engine_version: the vericto-engine version that evaluated it, when known
+            (always set offline).
         cached: True when the verdict came from the guard's cache, not the server.
         raw: the response body, for fields this version does not model yet.
     """
@@ -77,6 +82,8 @@ class Verdict:
     access_denied: tuple[Any, ...] = ()
     event_id: Optional[str] = None
     ruleset_version: Optional[str] = None
+    mode: str = "online"
+    engine_version: Optional[str] = None
     cached: bool = False
     raw: Mapping[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
@@ -102,7 +109,8 @@ class Verdict:
 
     @classmethod
     def from_response(cls, body: Mapping[str, Any], sql: str, dialect: str) -> Verdict:
-        """Build a verdict from a ``POST /api/v1/proxy/query`` response body."""
+        """Build a verdict from a ``POST /api/v1/proxy/query`` response body (offline
+        mode maps the local engine's result to the same shape first)."""
         raw_decision = str(body.get("decision") or "").upper()
         try:
             decision = Decision(raw_decision)
@@ -135,13 +143,15 @@ class Verdict:
             access_denied=tuple(body.get("access_denied") or ()),
             event_id=_opt_str(body.get("event_id")),
             ruleset_version=_opt_str(body.get("ruleset_version")),
+            mode=_opt_str(body.get("mode")) or "online",
+            engine_version=_opt_str(body.get("engine_version")),
             raw=dict(body),
         )
 
     @classmethod
-    def unevaluated(cls, sql: str, dialect: str, reason: str) -> Verdict:
+    def unevaluated(cls, sql: str, dialect: str, reason: str, *, mode: str = "online") -> Verdict:
         """The verdict the guard records when Vericto gave none and ``fail_mode`` is ``"open"``."""
-        return cls(decision=Decision.UNEVALUATED, sql=sql, dialect=dialect, message=reason)
+        return cls(decision=Decision.UNEVALUATED, sql=sql, dialect=dialect, message=reason, mode=mode)
 
 
 def _opt_str(value: Any) -> Optional[str]:

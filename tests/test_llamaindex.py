@@ -229,3 +229,13 @@ def test_context_and_end_user_go_with_every_statement(fake: FakeVericto, guard: 
     assert [r["end_user"] for r in fake.requests] == [{"id": "u_1"}] * 2
     with pytest.raises(VerictoConfigError, match="context"):
         VerictoSQLDatabase(engine, guard=guard, context={"user": "x"})
+
+
+def test_offline_guard(offline_guard: Vericto, engine: Engine) -> None:
+    db = VerictoSQLDatabase(engine, guard=offline_guard)
+    out, _ = db.run_sql("SELECT email FROM users WHERE id = 1")
+    assert out == "[('ana@example.com',)]"
+    out, meta = db.run_sql("DELETE FROM users")
+    assert out.startswith("Error: Vericto blocked this query (VERICTO-001")
+    assert meta["vericto_blocked"]["rule_code"] == "VERICTO-001"
+    assert _count(engine) == 2

@@ -9,7 +9,8 @@ catches anything this package raises. The two you normally handle are:
 * :class:`VerictoBlocked`: Vericto evaluated the statement and blocked it. The
   statement was **not** executed.
 * :class:`VerictoUnavailable`: Vericto could not give a verdict (network,
-  timeout, server error, monthly quota) and the guard runs with
+  timeout, server error, monthly quota; offline: the local ``vericto serve``
+  process failed) and the guard runs with
   ``fail_mode="closed"``. The statement was **not** executed.
 """
 
@@ -27,7 +28,10 @@ class VerictoError(Exception):
 
 class VerictoConfigError(VerictoError):
     """The client is misconfigured: missing or rejected API key, bad database id,
-    a key without the ``proxy:evaluate`` scope, or a malformed request.
+    a key without the ``proxy:evaluate`` scope, or a malformed request. In offline
+    mode: no ``vericto`` CLI (or one older than 2.1.0), offline mode combined with
+    an API key, or a statement the local engine refuses (``code`` is the engine's
+    error code, such as ``TOO_LARGE``).
 
     Raised whatever the fail mode is: failing open on a revoked key would turn the
     guardrails off without anyone noticing.
@@ -40,19 +44,21 @@ class VerictoConfigError(VerictoError):
 
 
 class VerictoUnsupportedDialect(VerictoConfigError):
-    """The Vericto server does not evaluate this dialect.
+    """The Vericto server (or, in offline mode, the local engine) does not evaluate
+    this dialect.
 
     Raised before any SQL runs, when the dialect is missing from the server's
     ``GET /api/v1/meta/config`` (for example ``sqlite`` against a server older than
     vericto-engine 4.1.0, or a dialect Vericto does not support at all).
     """
 
-    def __init__(self, dialect: str, supported: Sequence[str], api_url: str) -> None:
+    def __init__(self, dialect: str, supported: Sequence[str], api_url: str, *, where: Optional[str] = None) -> None:
         listed = ", ".join(supported) if supported else "none reported"
+        source = where or f"The Vericto API at {api_url}"
         super().__init__(
-            f"The Vericto API at {api_url} does not support the '{dialect}' dialect "
+            f"{source} does not support the '{dialect}' dialect "
             f"(supported: {listed}). No SQL was executed. "
-            "Upgrade the server, or use a supported dialect.",
+            + ("Use a supported dialect." if where else "Upgrade the server, or use a supported dialect."),
             code="UNSUPPORTED_DIALECT",
         )
         self.dialect = dialect

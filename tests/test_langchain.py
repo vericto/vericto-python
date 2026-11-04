@@ -351,3 +351,14 @@ def test_context_on_an_instrumented_engine_belongs_to_instrument(
         assert fake.requests[-1]["context"] == {"tenant": "acme"}
     finally:
         undo()
+
+
+def test_offline_guard(offline_guard: Vericto, engine: Engine) -> None:
+    db = VerictoSQLDatabase(engine, guard=offline_guard)
+    assert db.run("SELECT email FROM users WHERE id = 1") == "[('ana@example.com',)]"
+    out = db.run_no_throw("DELETE FROM users")
+    assert isinstance(out, str)
+    assert out.startswith("Error: Vericto blocked this query (VERICTO-001, severity critical)")
+    assert _count(engine) == 2
+    tool = VerictoCheckSQLTool(guard=offline_guard, dialect="sqlite")
+    assert "VERICTO-010" in tool.invoke({"query": "DROP TABLE users"})

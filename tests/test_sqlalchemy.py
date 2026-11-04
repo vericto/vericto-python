@@ -89,3 +89,12 @@ def test_is_instrumented(fake: FakeVericto, guard: Vericto, engine: Engine) -> N
     assert vericto.sqlalchemy.is_instrumented(engine)
     second()
     assert not vericto.sqlalchemy.is_instrumented(engine)
+
+
+def test_offline_guard(offline_guard: Vericto, engine: Engine) -> None:
+    vericto.sqlalchemy.instrument(engine, guard=offline_guard)
+    with engine.connect() as c:
+        assert c.execute(text("SELECT count(*) FROM users WHERE id = 1")).scalar_one() == 1
+        with pytest.raises(VerictoBlocked) as info:
+            c.execute(text("DELETE FROM users"))
+    assert info.value.verdict.mode == "offline"

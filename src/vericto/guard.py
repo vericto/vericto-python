@@ -25,6 +25,7 @@ from .errors import (
     VerictoUnsupportedDialect,
 )
 from .evaluator import Evaluator
+from .offline import DEFAULT_PROFILE, OfflineEvaluator, offline_requested
 from .placeholders import from_evaluation_text, to_evaluation_text
 from .policy_context import policy_fields
 from .runtime_api import DEFAULT_MAX_RETRIES, RuntimeApiEvaluator
@@ -41,8 +42,9 @@ class Vericto:
     """Checks SQL with Vericto before it runs.
 
     One instance is meant to be shared by the whole process (it is thread-safe and
-    pools its HTTP connections). The driver wrappers call :meth:`enforce` for every
-    statement; you can call it yourself around any other driver.
+    pools its HTTP connections, or keeps one ``vericto serve`` process offline). The
+    driver wrappers call :meth:`enforce` for every statement; you can call it
+    yourself around any other driver.
 
     Args:
         evaluator: what evaluates statements. Defaults to a
@@ -63,6 +65,18 @@ class Vericto:
             fail-open and ``BLOCKED`` ones (before the exception is raised).
         warn_on_flag: also emit a :class:`~vericto.VerictoFlaggedWarning` for
             flagged statements (they are always logged on the ``vericto`` logger).
+        offline: ``True`` (or ``VERICTO_OFFLINE=1``) evaluates with the local engine
+            of the ``vericto`` CLI (2.1.0+, ``vericto serve --stdio``) instead of the
+            Runtime API: no account, no network, the standard rules
+            (:mod:`vericto.offline`). Never switched on automatically. Combined with
+            an API key (argument or ``VERICTO_API_KEY``), a database id, an API URL or
+            an ``evaluator``, it raises :class:`~vericto.VerictoConfigError`.
+        offline_profile: ``"runtime"`` (default: ``DROP TABLE`` is ``BLOCKED``, as on
+            the Runtime API) or ``"ci"`` (exactly ``vericto check --offline``).
+        offline_cli_path: the ``vericto`` binary (default ``VERICTO_CLI``, then PATH).
+
+    The guard owns its evaluator: :meth:`close` (or ``with Vericto(...) as guard:``)
+    closes it, which stops the ``vericto serve`` process in offline mode.
     """
 
     def __init__(
@@ -79,7 +93,37 @@ class Vericto:
         cache_size: int = 1024,
         on_verdict: Optional[VerdictCallback] = None,
         warn_on_flag: bool = False,
+        offline: Optional[bool] = None,
+        offline_profile: Optional[str] = None,
+        offline_cli_path: Optional[str] = None,
     ) -> None:
+        if offline_requested(offline):
+            online = [
+                name
+                for name, value in (
+                    ("evaluator", evaluator),
+                    ("api_key", api_key),
+                    ("database_id", database_id),
+                    ("api_url", api_url),
+                )
+                if value is not None
+            ]
+            if os.environ.get("VERICTO_API_KEY", "").strip():
+                online.append("VERICTO_API_KEY")
+            if online:
+                source = "offline=True" if offline else "VERICTO_OFFLINE"
+                raise VerictoConfigError(
+                    f"Offline mode ({source}) and the Vericto API ({', '.join(online)}) are both configured: "
+                    "choose one. Offline mode uses the standard rules of the local engine; a workspace uses "
+                    "its own rules."
+                )
+            evaluator = OfflineEvaluator(
+                profile=offline_profile or DEFAULT_PROFILE, cli_path=offline_cli_path, timeout=timeout
+            )
+        elif offline_profile is not None or offline_cli_path is not None:
+            raise VerictoConfigError(
+                "offline_profile and offline_cli_path apply to offline mode only: pass offline=True too."
+            )
         if evaluator is None:
             evaluator = RuntimeApiEvaluator(
                 api_key, database_id=database_id, api_url=api_url, timeout=timeout, max_retries=max_retries
@@ -102,6 +146,24 @@ class Vericto:
     def __repr__(self) -> str:
         return f"Vericto(evaluator={self.evaluator!r}, fail_mode={self.fail_mode!r})"
 
+    @property
+    def offline(self) -> bool:
+        """True when statements are evaluated by the local engine (offline mode)."""
+        return getattr(self.evaluator, "mode", "online") == "offline"
+
+    def close(self) -> None:
+        """Close the evaluator: its HTTP connections, or the ``vericto serve`` process
+        in offline mode. Using the guard afterwards reconnects (or restarts it)."""
+        close = getattr(self.evaluator, "close", None)
+        if callable(close):
+            close()
+
+    def __enter__(self) -> Vericto:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
     def __deepcopy__(self, memo: dict[int, Any]) -> Vericto:
         # A guard is a shared, thread-safe service (HTTP pool, locks, cache): frameworks
         # that deep-copy the objects holding it (Airflow operators, pydantic models)
@@ -119,6 +181,8 @@ class Vericto:
         name = normalize_dialect(dialect)
         supported = self.evaluator.supported_dialects()
         if supported is not None and name not in supported:
+            if self.offline:
+                raise VerictoUnsupportedDialect(name, supported, "", where="The local Vericto engine (vericto serve)")
             api_url = getattr(self.evaluator, "api_url", "the configured evaluator")
             raise VerictoUnsupportedDialect(name, supported, str(api_url))
         return name
@@ -156,7 +220,7 @@ class Vericto:
             if self.fail_mode == "closed":
                 raise
             logger.warning("vericto: no verdict, check answered UNEVALUATED (fail_mode=open): %s", exc)
-            return Verdict.unevaluated(sql, normalize_dialect(dialect), str(exc))
+            return Verdict.unevaluated(sql, normalize_dialect(dialect), str(exc), mode=self._mode)
 
     def enforce(
         self,
@@ -195,7 +259,7 @@ class Vericto:
             if self.fail_mode == "closed":
                 logger.error("vericto: no verdict, statement not executed (fail_mode=closed): %s", exc)
                 raise
-            verdict = Verdict.unevaluated(sql, name, str(exc))
+            verdict = Verdict.unevaluated(sql, name, str(exc), mode=self._mode)
             logger.warning("vericto: no verdict, statement executed unevaluated (fail_mode=open): %s", exc)
             warnings.warn(
                 f"Vericto could not evaluate the statement and fail_mode is 'open', so it ran unchecked: {exc}",
@@ -257,6 +321,10 @@ class Vericto:
             self._cache.clear()
 
     # -- internals ----------------------------------------------------------------
+
+    @property
+    def _mode(self) -> str:
+        return "offline" if self.offline else "online"
 
     def _evaluate(self, sql: str, dialect: str, fields: Dict[str, Any]) -> Verdict:
         """One evaluation through the cache; raises what the evaluator raises."""

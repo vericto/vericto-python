@@ -19,6 +19,12 @@ The dialect comes from the manifest's adapter type (``--dialect`` overrides it):
 snowflake, postgres, redshift (evaluated as postgres), mysql/mariadb, sqlserver
 (as mssql) and oracle. Other adapters stop with exit code 2.
 
+``--offline`` (or ``VERICTO_OFFLINE=1``) evaluates with the local engine of the
+``vericto`` CLI instead (2.1.0+, ``vericto serve --stdio``): no key, no network, the
+standard rules under the ``ci`` profile, so the verdicts equal ``vericto check
+--offline``. Workspace rules, sensitive-column tags and the CI-check allowance do
+not apply.
+
 Exit codes (as vericto-cli): 0 nothing at or above ``--fail-on``; 1 a finding at
 or above it; 2 usage error (no manifest, unsupported adapter, nothing compiled);
 3 key, scope or monthly allowance problem; 4 Vericto unreachable.
@@ -33,12 +39,16 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import IO, Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 from ._version import __version__
 from .ci_api import MAX_ENTRIES_PER_CALL, CiCheckClient, CiFile, CiRequestError, provenance_from_env
 from .errors import VerictoConfigError, VerictoQuotaExceeded, VerictoUnavailable
+from .offline import OfflineCiClient, offline_requested
 from .sanitize import sanitize
+
+#: What evaluates the statements: the CI-check API, or the local engine (--offline).
+CiClient = Union[CiCheckClient, OfflineCiClient]
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1
@@ -132,6 +142,7 @@ class Report:
     ruleset_version: Optional[str] = None
     ci_checks_remaining: Optional[int] = None
     sanitized: bool = False
+    mode: str = "online"
 
     def count(self, status: str) -> int:
         return sum(1 for r in self.results if r.status == status)
@@ -321,7 +332,7 @@ def _hook_index(unique_id: str) -> Optional[int]:
 
 
 def evaluate(
-    client: CiCheckClient,
+    client: CiClient,
     items: Sequence[Item],
     dialect: str,
     *,
@@ -443,6 +454,7 @@ def render_json(report: Report) -> str:
         "fail_on": report.fail_on,
         "exit_code": report.exit_code,
         "sanitized": report.sanitized,
+        "mode": report.mode,
         "ruleset_version": report.ruleset_version,
         "ci_checks_remaining": report.ci_checks_remaining,
         "summary": report.summary(),
@@ -598,6 +610,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Prefix for SARIF file paths (default: the project dir relative to the cwd).",
     )
     check.add_argument(
+        "--offline",
+        action="store_true",
+        default=None,
+        help="Check with the local engine of the vericto CLI 2.1.0+ (standard rules, ci profile): "
+        "no key, no network ($VERICTO_OFFLINE).",
+    )
+    check.add_argument(
         "--api-url", default=None, help="Vericto API URL ($VERICTO_API_URL, default https://api.vericto.com)."
     )
     check.add_argument(
@@ -624,7 +643,25 @@ def _uri_prefix(project_dir: Path, explicit: Optional[str]) -> str:
     return rel.replace(os.sep, "/") + "/"
 
 
-def run_check(args: argparse.Namespace, out: IO[str], err: IO[str], client: Optional[CiCheckClient] = None) -> int:
+def _offline_client(args: argparse.Namespace) -> OfflineCiClient:
+    online = [
+        name
+        for name, value in (
+            ("--api-url", args.api_url),
+            ("--database-id", args.database_id),
+            ("VERICTO_API_KEY", os.environ.get("VERICTO_API_KEY", "").strip() or None),
+        )
+        if value
+    ]
+    if online:
+        raise VerictoConfigError(
+            f"--offline and the Vericto API ({', '.join(online)}) are both configured: choose one. "
+            "Offline checks use the standard rules of the local engine; a workspace uses its own rules."
+        )
+    return OfflineCiClient(timeout=args.timeout)
+
+
+def run_check(args: argparse.Namespace, out: IO[str], err: IO[str], client: Optional[CiClient] = None) -> int:
     project_dir = Path(args.project_dir)
     target_rel = args.target_path or os.environ.get("DBT_TARGET_PATH") or "target"
     target = Path(target_rel) if Path(target_rel).is_absolute() else project_dir / target_rel
@@ -658,14 +695,35 @@ def run_check(args: argparse.Namespace, out: IO[str], err: IO[str], client: Opti
             raise UsageError("No compiled SQL found in the manifest: run `dbt compile` (or `dbt build --empty`) first.")
         report.notes.append("Nothing to check.")
     else:
-        database_id = args.database_id or os.environ.get("VERICTO_DATABASE_ID") or None
+        owned: Optional[OfflineCiClient] = None
+        if client is None and offline_requested(args.offline):
+            client = owned = _offline_client(args)
+        if isinstance(client, OfflineCiClient):
+            report.mode = "offline"
+            database_id = None
+        else:
+            database_id = args.database_id or os.environ.get("VERICTO_DATABASE_ID") or None
         if client is None:
             client = CiCheckClient(
                 api_url=args.api_url, timeout=args.timeout, user_agent=f"vericto-python/{__version__} (dbt)"
             )
-        evaluate(
-            client, items, dialect, report=report, database_id=database_id, allow_unsanitized=args.allow_unsanitized
-        )
+        try:
+            evaluate(
+                client,
+                items,
+                dialect,
+                report=report,
+                database_id=database_id,
+                allow_unsanitized=args.allow_unsanitized,
+            )
+        finally:
+            if owned is not None:
+                owned.close()
+        if report.mode == "offline":
+            report.notes.append(
+                f"Offline: the standard rules of the local engine ({report.ruleset_version or 'vericto serve'}), "
+                "ci profile. Workspace rules and sensitive-column tags do not apply."
+            )
 
     if args.format == "json":
         text = render_json(report)
@@ -682,7 +740,7 @@ def run_check(args: argparse.Namespace, out: IO[str], err: IO[str], client: Opti
     return report.exit_code
 
 
-def main(argv: Optional[Iterable[str]] = None, *, client: Optional[CiCheckClient] = None) -> int:
+def main(argv: Optional[Iterable[str]] = None, *, client: Optional[CiClient] = None) -> int:
     """Entry point of ``vericto-dbt`` (and ``python -m vericto dbt``)."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -702,8 +760,18 @@ def main(argv: Optional[Iterable[str]] = None, *, client: Optional[CiCheckClient
         err.write(f"vericto-dbt: {exc}\n")
         return EXIT_USAGE
     except VerictoUnavailable as exc:
-        err.write(f"vericto-dbt: Vericto is unreachable, nothing was checked: {exc}\n")
+        if isinstance(client, OfflineCiClient) or (client is None and _offline_flag(args)):
+            err.write(f"vericto-dbt: no verdict from the local engine, nothing was checked: {exc}\n")
+        else:
+            err.write(f"vericto-dbt: Vericto is unreachable, nothing was checked: {exc}\n")
         return EXIT_BACKEND
+
+
+def _offline_flag(args: argparse.Namespace) -> bool:
+    try:
+        return offline_requested(args.offline)
+    except VerictoConfigError:
+        return False
 
 
 def console_main() -> None:
