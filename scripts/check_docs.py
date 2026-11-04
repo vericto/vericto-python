@@ -18,8 +18,12 @@ An HTML comment on the line before a fence changes what happens to the block:
   install the framework pass ``--strict``).
 * ``<!-- docs-check: continue -->``: appended to the previous block and run
   together (a guide that builds an example over several blocks).
+* ``<!-- docs-check: offline -->``: an offline-mode example. It runs against the
+  real ``vericto`` CLI 2.1.0+ (``VERICTO_CLI``, else PATH) with no ``VERICTO_API_*``
+  variables; without that CLI it is skipped, or a failure with ``--require-cli``
+  (the CI job that installs the CLI passes it, with ``--offline-only``).
 
-Usage: ``python scripts/check_docs.py [--strict] [--timeout S] FILE.md...``
+Usage: ``python scripts/check_docs.py [--strict] [--require-cli] [--offline-only] [--timeout S] FILE.md...``
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ import argparse
 import importlib.util
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -50,6 +55,7 @@ class Block:
     code: str
     skip: Optional[str] = None
     requires: List[str] = field(default_factory=list)
+    offline: bool = False
 
 
 def blocks_of(path: Path) -> List[Block]:
@@ -75,20 +81,38 @@ def blocks_of(path: Path) -> List[Block]:
                     block.skip = text[4:].strip() or "marked skip"
                 elif text.startswith("requires="):
                     block.requires = [m.strip() for m in text[len("requires=") :].split(",") if m.strip()]
+                elif text == "offline":
+                    block.offline = True
                 out.append(block)
             i = j
         i += 1
     return out
 
 
+def offline_cli() -> Optional[str]:
+    """The vericto CLI the offline examples run against, if it is 2.1.0 or later."""
+    path = os.environ.get("VERICTO_CLI", "").strip() or shutil.which("vericto")
+    if not path:
+        return None
+    try:
+        out = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10, check=False)  # noqa: S603
+    except OSError:
+        return None
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", out.stdout)
+    return path if match and tuple(int(g) for g in match.groups()) >= (2, 1, 0) else None
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("files", nargs="+", type=Path)
     parser.add_argument("--strict", action="store_true", help="a block whose requirements are missing fails")
+    parser.add_argument("--require-cli", action="store_true", help="an offline block without the vericto CLI fails")
+    parser.add_argument("--offline-only", action="store_true", help="run only the offline blocks")
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("-v", "--verbose", action="store_true", help="print the output of every block")
     args = parser.parse_args(argv)
 
+    cli = offline_cli()
     stub = StubServer().start()
     env = dict(os.environ)
     for name in list(env):
@@ -108,11 +132,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         DO_NOT_TRACK="1",
         PYDANTIC_AI_NO_BANNER="1",
     )
+    # Offline examples: no account at all, only the CLI.
+    offline_env = {k: v for k, v in env.items() if not k.startswith("VERICTO_")}
+    if cli:
+        offline_env["VERICTO_CLI"] = cli
     ran = skipped = failed = 0
     try:
         for path in args.files:
             for block in blocks_of(path):
                 where = f"{path}:{block.line}"
+                if args.offline_only and not block.offline:
+                    continue
+                if block.offline and cli is None:
+                    if args.require_cli:
+                        print(f"FAIL {where}: needs the vericto CLI 2.1.0+ (VERICTO_CLI or PATH)")
+                        failed += 1
+                    else:
+                        print(f"SKIP {where}: needs the vericto CLI 2.1.0+ (VERICTO_CLI or PATH)")
+                        skipped += 1
+                    continue
                 if block.skip:
                     print(f"SKIP {where}: {block.skip}")
                     skipped += 1
@@ -131,7 +169,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         proc = subprocess.run(  # noqa: S603 - our own interpreter on our own docs
                             [sys.executable, "-c", block.code],
                             cwd=tmp,
-                            env=env,
+                            env=offline_env if block.offline else env,
                             capture_output=True,
                             text=True,
                             timeout=args.timeout,

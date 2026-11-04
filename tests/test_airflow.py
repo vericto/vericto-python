@@ -466,3 +466,28 @@ def test_policy_is_idempotent(guard: Vericto) -> None:
     hook = stock._pre_execute_hook
     assert guard_sql_tasks(stock, guard=guard) is True
     assert stock._pre_execute_hook is hook  # not wrapped twice
+
+
+def test_operator_with_an_offline_shared_guard(
+    fake_cli: str, database: Path, dag_file: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Workers build the guard from VERICTO_OFFLINE / VERICTO_CLI: the local engine, no key."""
+    monkeypatch.setenv("VERICTO_OFFLINE", "1")
+    monkeypatch.setenv("VERICTO_CLI", fake_cli)
+    dag = dag_file(
+        f"""
+        VerictoSQLExecuteQueryOperator(
+            task_id="ok", conn_id="{CONN_ID}", sql="UPDATE users SET email = 'x@example.com' WHERE id = 2"
+        )
+        VerictoSQLExecuteQueryOperator(
+            task_id="script",
+            conn_id="{CONN_ID}",
+            sql="UPDATE users SET email = 'y@example.com' WHERE id = 1; DELETE FROM users;",
+        )
+        """
+    )
+    states = _run(dag)
+    assert not _failed(states, "ok")
+    assert _failed(states, "script")
+    assert _rows(database)[0] == (1, "ana@example.com")
+    assert _rows(database)[1] == (2, "x@example.com")

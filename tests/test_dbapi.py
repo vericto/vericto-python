@@ -372,3 +372,12 @@ def test_driver_cursor_context_manager_is_used(raw: FakeConnection, conn: Guarde
         cur.execute("SELECT 1")
     assert events == ["enter", "exit"]
     assert raw.log == [("SELECT 1", None)]
+
+
+def test_offline_guard(offline_guard: Vericto, raw: FakeConnection) -> None:
+    conn = vericto.wrap(raw, guard=offline_guard, dialect="postgres")
+    conn.cursor().execute("SELECT id FROM users WHERE id = %s", (1,))
+    with pytest.raises(VerictoBlocked) as info:
+        conn.cursor().execute("DROP TABLE users")
+    assert info.value.verdict.rule_code == "VERICTO-010"
+    assert info.value.verdict.mode == "offline"

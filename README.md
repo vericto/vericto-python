@@ -17,9 +17,10 @@ statements raise before they reach the database, flagged ones run and are
 reported, and statements that read masked columns run as the masked rewrite
 Vericto returns.
 
-It is a thin client of the **Vericto Runtime API** (`POST /api/v1/proxy/query`).
-Evaluation happens in your Vericto workspace; nothing is evaluated locally in this
-release (see [Evaluators](#evaluators)).
+It is a thin client of the **Vericto Runtime API** (`POST /api/v1/proxy/query`):
+evaluation happens in your Vericto workspace. To try it with no account,
+[offline mode](#offline-mode-no-account) checks SQL with the standard rules of the
+engine in the local `vericto` CLI.
 
 - Python 3.11+, typed (`py.typed`), one dependency (`urllib3`). Python 3.10 reached
   end of life in October 2026: on 3.10, stay on 0.6.x (`pip install "vericto<0.7"`).
@@ -39,6 +40,9 @@ pip install "vericto[airflow]"       # Airflow 3 operator and cluster policy
 pip install "vericto[dbt]"           # vericto-dbt: CI checks for dbt projects (no extra dependency)
 ```
 
+[Offline mode](#offline-mode-no-account) needs no extra: it runs the Vericto CLI
+(2.1.0+), installed separately.
+
 ## Configure
 
 Create an API key with the **`proxy:evaluate`** scope in the Vericto dashboard
@@ -52,6 +56,8 @@ Create an API key with the **`proxy:evaluate`** scope in the Vericto dashboard
 | `VERICTO_FAIL_MODE` | `closed` or `open` (see [Fail mode](#fail-mode)) | `closed` |
 | `VERICTO_TIMEOUT` | Seconds per attempt (see [Timeouts and retries](#timeouts-and-retries)) | `5` |
 | `VERICTO_CA_BUNDLE` | Extra CA bundle (PEM) to trust | system store |
+| `VERICTO_OFFLINE` | `1` for [offline mode](#offline-mode-no-account) (no key, the local CLI's engine) | off |
+| `VERICTO_CLI` | The `vericto` binary offline mode runs | `vericto` on `PATH` |
 
 A keyword argument beats its variable: `Vericto(api_key=..., database_id=...,
 api_url=..., timeout=..., max_retries=..., fail_mode=...)`. The CA bundle is an
@@ -148,6 +154,94 @@ run_this = verdict.sql_to_execute  # the masked rewrite, if any
 
 More drivers and every agent framework: [Frameworks](#frameworks).
 
+## Offline mode (no account)
+
+Check SQL with no account, no API key and no network. `Vericto(offline=True)`
+(or `VERICTO_OFFLINE=1`) evaluates each statement with the engine built into the
+[Vericto CLI](https://github.com/vericto/vericto-cli), which the SDK runs as a
+separate process (`vericto serve --stdio`). Every wrapper and integration works
+unchanged, and the result is the same `Verdict`, with `mode="offline"`,
+`engine_version` and `ruleset_version` (`standard@engine-5.0.0` with CLI 2.1.0).
+Offline mode is never switched on by itself: a missing API key stays an error.
+
+Install the CLI, 2.1.0 or later, with any one of:
+
+```bash
+npm i -g @vericto/vericto-cli
+brew install vericto/tap/vericto
+scoop bucket add vericto https://github.com/vericto/scoop-bucket && scoop install vericto/vericto
+# or a binary from https://github.com/vericto/vericto-cli/releases (each archive has a .sha256)
+vericto --version            # vericto 2.1.0
+```
+
+The SDK runs `offline_cli_path=` if given, else `VERICTO_CLI`, else `vericto` on
+`PATH`. It never downloads anything: without a CLI, or with one older than 2.1.0,
+the guard raises `VerictoConfigError` with the commands above.
+
+<!-- docs-check: offline -->
+```python
+import vericto
+import vericto.sqlite
+
+with vericto.Vericto(offline=True) as guard:  # or VERICTO_OFFLINE=1
+    verdict = guard.check("DROP TABLE users", "postgres")
+    print(verdict.decision.value, verdict.rule_code, verdict.mode, verdict.ruleset_version)
+    # BLOCKED VERICTO-010 offline standard@engine-5.0.0
+    assert verdict.blocked and verdict.mode == "offline"
+
+    conn = vericto.sqlite.connect(":memory:", guard=guard)
+    conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)")
+    try:
+        conn.execute("DELETE FROM users")
+    except vericto.VerictoBlocked as exc:
+        print(exc.verdict.rule_code, exc.suggested_fix)  # VERICTO-001 and a safer statement
+    conn.close()
+
+# Exactly what `vericto check --offline` answers (schema DDL is flagged, not blocked):
+with vericto.Vericto(offline=True, offline_profile="ci") as guard:
+    assert guard.check("DROP TABLE users", "postgres").decision is vericto.Decision.FLAGGED
+```
+
+| `offline_profile` | Matches | `DROP TABLE users` |
+|---|---|---|
+| `"runtime"` (default) | the Runtime API, MCP `check_sql` and the proxy's local mode, for a workspace with no overrides | `BLOCKED` (VERICTO-010) |
+| `"ci"` | `vericto check --offline` and the CI-check API: the DDL rules VERICTO-010 to 019 are capped at `FLAGGED` | `FLAGGED` |
+
+How it behaves:
+
+- **One process per guard**, started when the guard checks its initial statement
+  and shared by every thread (requests are matched to answers by id, so 8 threads
+  share one process safely). `guard.close()`, `with Vericto(...)`, garbage
+  collection and interpreter exit stop it; nothing is left running.
+- **One verdict per call**, as online: a text with several statements gets one
+  verdict, the strongest finding among them (`vericto check --offline` reports a
+  file the same way). The SDK does not split statements; `vericto.sqlite`'s
+  `executescript()` and the Airflow operator split scripts before checking, online
+  and offline alike.
+- **Fail mode**: if the process dies, the check restarts it once and resends the
+  statement; if that fails too (or the engine reports `INTERNAL`, or no answer
+  comes within `timeout`, default 30 s), the guard applies `fail_mode` exactly as
+  when the Runtime API is unreachable: `VerictoUnavailable` when closed, an
+  `UNEVALUATED` verdict when open.
+- **Errors raised in both fail modes** (`VerictoConfigError`, `.code` set): no CLI
+  or one too old (`CLI_NOT_FOUND`, `CLI_TOO_OLD`), offline combined with an API
+  key, a database id, an API URL or an `evaluator` ("choose one"), an unknown
+  dialect (`VerictoUnsupportedDialect`), empty SQL (`INVALID_REQUEST`), and a
+  statement over the CLI's 1 MiB request limit (`TOO_LARGE`).
+- The CLI's stderr goes to the `vericto` logger at debug level. SQL is never
+  logged.
+- `vericto-dbt check --offline` (or `VERICTO_OFFLINE=1`) checks a dbt project with
+  the `ci` profile, with no key; Airflow workers use it with `VERICTO_OFFLINE=1`.
+
+Offline checks use the 42 standard rules at their default severities. A
+workspace adds custom rules, severity overrides, sensitive-column masking, agent
+allowlists, business policies (`context` and `end_user` are accepted offline and
+have no effect) and the audit trail. Connect one with an API key when you need
+them.
+
+The engine runs in the separate CLI process, which is licensed AGPL-3.0-only.
+This package never links, imports or bundles it, so the SDK stays Apache-2.0.
+
 ## Core API
 
 `Vericto` is the guard: one instance per process (thread-safe, it pools its HTTP
@@ -161,6 +255,7 @@ connections). The wrappers call it for you; call it yourself around anything els
 | `check(sql, dialect, *, context=None, end_user=None) -> Verdict` | Asks only: returns the verdict whatever it is, `BLOCKED` included; under `fail_mode="open"`, an `UNEVALUATED` verdict with the reason when Vericto cannot answer. | `VerictoUnavailable` (fail closed); `VerictoConfigError` |
 | `require_dialect(dialect) -> str` | Fails fast if the server does not evaluate the dialect; returns the normalized id (`postgresql` → `postgres`). | `VerictoUnsupportedDialect` |
 | `clear_cache()` | Drops cached verdicts (see [Caching](#caching)). | |
+| `close()` | Closes the evaluator: the HTTP connections, or the `vericto serve` process offline. `with Vericto(...) as guard:` calls it. Using the guard again reconnects. | |
 
 `paramstyle` is the driver's DB-API paramstyle, given only when the statement runs
 with parameters (see [Parameters and placeholders](#parameters-and-placeholders)).
@@ -200,6 +295,7 @@ A `Verdict` (frozen dataclass) carries:
 | `sensitive_columns`, `access_denied` | The tagged columns the statement reads, and what the API key's allowlist denied. |
 | `parse_error` | The parser's message, on `PARSE_ERROR`. |
 | `event_id` | The audit-trail event, to look the evaluation up in Vericto. |
+| `ruleset_version`, `mode`, `engine_version` | The ruleset the verdict was computed under; `"online"` or `"offline"`; the engine version (offline). |
 | `blocked`, `degraded`, `cached` | `decision is BLOCKED`; ran without a verdict (fail-open); came from the cache. |
 | `raw` | The response body, for fields this version does not model. |
 
@@ -335,8 +431,9 @@ raised for it and the evaluation request decides.
 ## Sync and async
 
 The API is **synchronous** and blocking: there is no `async` variant in this
-release. Every check is one HTTPS round trip on the calling thread, and the
-guard is thread-safe, so share one per process.
+release. Every check is one HTTPS round trip on the calling thread (offline: one
+request to the local `vericto serve` process), and the guard is thread-safe, so
+share one per process.
 
 - In `asyncio` code, run the check in a worker thread so the event loop keeps
   going: `sql = await asyncio.to_thread(guard.prepare, sql, "postgres")`.
@@ -406,7 +503,7 @@ All inherit from `VerictoError`.
 | `VerictoBlocked` | Vericto blocked the statement. `.verdict`, `.findings`, `.suggested_fix`, `.sql`. |
 | `VerictoUnavailable` | No verdict and `fail_mode="closed"`. |
 | `VerictoQuotaExceeded` | Subclass of `VerictoUnavailable`: monthly quota used (`.resets_at`). |
-| `VerictoConfigError` | Key, scope, database id, URL or request problem, or an invalid `context` / `end_user`. Raised in both fail modes. |
+| `VerictoConfigError` | Key, scope, database id, URL or request problem, or an invalid `context` / `end_user`. Offline: no CLI 2.1.0+, offline combined with a key, or a statement the engine refuses (`.code`). Raised in both fail modes. |
 | `VerictoUnsupportedDialect` | Subclass of `VerictoConfigError`: the server does not evaluate that dialect. |
 | `PlaceholderMappingError` | A masked rewrite could not be mapped back to `%s`-style placeholders. |
 
@@ -416,10 +513,10 @@ All inherit from `VerictoError`.
 and `supported_dialects()`. When the caller gives `context` or `end_user`, the
 guard passes them as keyword arguments of the same names (an evaluator without
 them raises `TypeError` then, rather than dropping them). This release ships
-`RuntimeApiEvaluator`. An embedded
-evaluator (the Vericto engine in-process with synced rules, for latency and
-offline use) can be added later behind the same interface without changing the
-wrappers or your code beyond the constructor.
+`RuntimeApiEvaluator` and `OfflineEvaluator(profile=..., cli_path=..., timeout=...)`,
+what `Vericto(offline=True)` builds (see
+[Offline mode](#offline-mode-no-account)). An evaluator with a `close()` method
+is closed by `Vericto.close()`.
 
 ## Frameworks
 
@@ -599,6 +696,7 @@ dbt compile                       # or: dbt build --empty
 VERICTO_API_KEY=vtro_... vericto-dbt check                      # table, exit 1 on BLOCKED
 vericto-dbt check --fail-on flagged --format sarif --output vericto.sarif
 python -m vericto dbt check --format json                       # same command
+vericto-dbt check --offline                                     # no key: the local vericto CLI 2.1.0+
 ```
 
 Reads `target/manifest.json` (and `target/compiled`, or `target/run` with
@@ -623,6 +721,12 @@ imported: only its artifacts are read.
   that setting cannot be read nothing is sent unless `--allow-unsanitized`.
 - `--database-id` / `VERICTO_DATABASE_ID` applies that database's sensitive-column
   tags. Runs carry GitHub/GitLab provenance and appear in the dashboard's CI reports.
+- **Offline** (`--offline` or `VERICTO_OFFLINE=1`): each statement is checked by
+  the local `vericto` CLI (2.1.0+, see [Offline mode](#offline-mode-no-account))
+  with the `ci` profile, so the verdicts equal `vericto check --offline`. No key,
+  no network, no allowance spent; workspace rules and sensitive-column tags do not
+  apply. Combined with `VERICTO_API_KEY`, `--api-url` or `--database-id` it exits
+  `3` ("choose one"); a local engine failure exits `4`.
 - SARIF points at the model file (line 1: compiled lines do not map to the Jinja
   source; the message gives the compiled line). GitHub Actions example:
   [examples/dbt_github_actions.yml](https://github.com/vericto/vericto-python/blob/main/examples/dbt_github_actions.yml).
@@ -673,8 +777,8 @@ def task_policy(task):
 
 ## Roadmap
 
-- **Embedded evaluator**, and SQLite's `set_authorizer` as a second deny layer
-  (`ATTACH`, `load_extension`).
+- An evaluator with the workspace's synced rules, and SQLite's `set_authorizer`
+  as a second deny layer (`ATTACH`, `load_extension`).
 - dbt: a run-time `on-run-start` macro; LlamaIndex.TS.
 
 ## Development
@@ -700,6 +804,20 @@ uv venv /tmp/vericto-lc && uv pip install --python /tmp/vericto-lc -e . -r ci/re
 /tmp/vericto-lc/bin/python -m pytest tests/test_langchain.py
 ```
 
+Offline mode is tested against `tests/fake_serve.py`, a stand-in for
+`vericto serve --stdio` (crashes, malformed answers, timeouts, ordering, 8
+threads), in the core job and in each integration job. `tests/test_offline_cli.py`
+runs against the real CLI: 16 inputs over the six dialects, where each verdict and
+its whole result document must equal `vericto check --offline --format json` from
+the same binary under the `ci` profile. It skips without a CLI 2.1.0+
+(`VERICTO_CLI`, else `PATH`); the CI job "Offline (vericto CLI)" installs the
+release binary, checks its SHA-256, and sets `VERICTO_REQUIRE_CLI=1` so that a
+missing binary fails instead:
+
+```bash
+VERICTO_CLI=/path/to/vericto uv run pytest tests/test_offline_cli.py
+```
+
 ### Documentation examples
 
 Every `python` block of this README and of `docs/frameworks/*.md` runs in CI
@@ -708,7 +826,10 @@ service's status codes and bodies (it is not the engine: its few rules are strin
 checks). Each block runs in its own interpreter and temporary directory; a block
 marked `<!-- docs-check: skip REASON -->` is listed but not run, and
 `<!-- docs-check: requires=module -->` skips it unless the module is installed
-(`--strict` makes that a failure, as in the framework jobs).
+(`--strict` makes that a failure, as in the framework jobs). A block marked
+`<!-- docs-check: offline -->` runs against the real `vericto` CLI 2.1.0+, with no
+`VERICTO_API_*` variables, and is skipped without one (`--require-cli` makes that
+a failure; the offline CI job runs `--require-cli --offline-only`).
 
 ```bash
 uv run python scripts/check_docs.py README.md docs/frameworks/dbapi.md docs/frameworks/sqlalchemy.md
@@ -810,7 +931,9 @@ Open source under the [Apache License 2.0](https://github.com/vericto/vericto-py
 and remain under it. Copyright 2026 Vericto S.A.S.; see [NOTICE](https://github.com/vericto/vericto-python/blob/main/NOTICE). The
 license grants no right to the Vericto name or logo: see
 [TRADEMARKS.md](https://github.com/vericto/vericto-python/blob/main/TRADEMARKS.md). The Vericto service the SDK calls is offered
-under its own [terms](https://vericto.com/terms).
+under its own [terms](https://vericto.com/terms). Offline mode runs the Vericto
+CLI, licensed AGPL-3.0-only, as a separate process; the SDK never links, imports
+or bundles the engine, so it stays Apache-2.0.
 
 ---
 
@@ -882,6 +1005,26 @@ SQLite: el servidor de Vericto evalúa el dialecto `sqlite` (vericto-engine
 4.1.0+). `vericto.sqlite.connect()` igual consulta `GET /api/v1/meta/config` y,
 si un servidor no lo anuncia, falla con `VerictoUnsupportedDialect` sin ejecutar
 nada.
+
+Modo sin conexión (sin cuenta): `Vericto(offline=True)` (o `VERICTO_OFFLINE=1`)
+valida cada sentencia con el motor incluido en la CLI de Vericto 2.1.0 o
+posterior, que el SDK ejecuta como un proceso aparte (`vericto serve --stdio`), sin
+clave de API ni red. Instale la CLI con `npm i -g @vericto/vericto-cli`,
+`brew install vericto/tap/vericto`, Scoop o un binario de las releases de GitHub;
+el SDK la busca en `offline_cli_path=`, `VERICTO_CLI` o el `PATH`, y nunca descarga
+nada. Los wrappers e integraciones funcionan igual y el resultado es el mismo
+`Verdict`, con `mode="offline"`, `engine_version` y `ruleset_version`
+(`standard@engine-<versión>`). Perfiles: `offline_profile="runtime"` (por defecto,
+como la Runtime API: `DROP TABLE` queda `BLOCKED`) o `"ci"` (igual que
+`vericto check --offline`: el DDL de esquema queda `FLAGGED`). Combinarlo con una
+clave de API o con otro evaluador lanza `VerictoConfigError` ("choose one"). Si el
+proceso muere, se reinicia una vez; si vuelve a fallar, se aplica `fail_mode` como
+con la API. `vericto-dbt check --offline` usa el perfil `ci`. Sin conexión se usan
+las 42 reglas estándar: las reglas propias, el enmascarado de columnas sensibles,
+las allowlists, las políticas de negocio y la auditoría requieren un workspace. El
+motor corre en el proceso aparte de la CLI, con licencia AGPL-3.0-only; este
+paquete nunca lo enlaza, importa ni incluye, y por eso el SDK sigue siendo
+Apache-2.0.
 
 Licencia: código abierto bajo la [Apache License 2.0](https://github.com/vericto/vericto-python/blob/main/LICENSE) desde 0.4.0. Las
 versiones 0.3.2 y anteriores se publicaron bajo la Elastic License 2.0 y siguen

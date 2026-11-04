@@ -156,6 +156,52 @@ jobs:
           uv pip install --python "$RUNNER_TEMP/extra/bin/python" mypy==1.20.2
           "$RUNNER_TEMP/extra/bin/python" -m mypy --python-version "$PYTHON_VERSION" --follow-imports=silent $TYPECHECK
 
+  offline:
+    # Offline mode against the real Vericto CLI (vericto serve --stdio): the release
+    # binary, its SHA-256 pinned here and checked against the release's .sha256
+    # before it is extracted, as vericto/check-sql installs it. One Python, Linux
+    # only, to keep CI minutes low; tests/test_offline_cli.py fails instead of
+    # skipping when the binary is missing (VERICTO_REQUIRE_CLI).
+    name: Offline (vericto CLI)
+    runs-on: ${{ github.event.repository.private && fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","x64","vericto-spot"]') || fromJSON(vars.CI_RUNS_ON_PUBLIC || '"ubuntu-latest"') }}
+    timeout-minutes: 10
+    env:
+      VERICTO_CLI_VERSION: "2.1.0"
+      # sha256 of vericto-cli-x86_64-unknown-linux-musl.tar.xz in the v2.1.0 release.
+      VERICTO_CLI_SHA256: "8c041e05bc0f2260300f3e987d366f18e0b9fbefaacc089959d53c60f3f37f32"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.13"
+      - name: Install Vericto CLI (release asset, SHA-256 verified)
+        run: |
+          set -euo pipefail
+          asset=vericto-cli-x86_64-unknown-linux-musl.tar.xz
+          base="https://github.com/vericto/vericto-cli/releases/download/v$VERICTO_CLI_VERSION"
+          dir="$RUNNER_TEMP/vericto-cli"
+          mkdir -p "$dir"
+          cd "$dir"
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 3 --retry-delay 2 -o "$asset" "$base/$asset"
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 3 --retry-delay 2 -o "$asset.sha256" "$base/$asset.sha256"
+          # Hard gate before extracting: the pinned digest, and the release's own checksum file.
+          echo "$VERICTO_CLI_SHA256  $asset" | sha256sum -c -
+          test "$(cut -d' ' -f1 "$asset.sha256")" = "$VERICTO_CLI_SHA256"
+          tar -xJf "$asset"
+          bin="$dir/vericto-cli-x86_64-unknown-linux-musl/vericto"
+          test "$("$bin" --version)" = "vericto $VERICTO_CLI_VERSION"
+          echo "VERICTO_CLI=$bin" >> "$GITHUB_ENV"
+      - run: uv sync --locked
+      - name: Offline tests (fake serve, real CLI, parity)
+        env:
+          VERICTO_REQUIRE_CLI: "1"
+        run: uv run pytest -v tests/test_offline.py tests/test_offline_cli.py
+      - name: Offline docs examples
+        run: uv run python scripts/check_docs.py --strict --require-cli --offline-only README.md
+
   docs:
     # Every python block of the README and docs/frameworks/*.md runs against a local
     # stand-in for the Runtime API (scripts/check_docs.py, scripts/docs_stub.py), with

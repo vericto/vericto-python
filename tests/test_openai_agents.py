@@ -517,3 +517,25 @@ def test_guardrail_on_an_mcp_server(fake: FakeVericto, guard: Vericto, tmp_path:
     assert "ran SELECT 1" in ran
     assert "pong" in pong
     assert fake.queries() == ["DELETE FROM users", "SELECT 1"]  # ping is not a SQL tool: not checked
+
+
+def test_offline_guard_sync_and_async_tools(offline_guard: Vericto, db: sqlite3.Connection) -> None:
+    ran: List[str] = []
+
+    @vericto_sql_tool(dialect="sqlite", guard=offline_guard)
+    def run_sql(query: str) -> str:
+        """Run SQL."""
+        ran.append(query)
+        return str(db.execute(query).fetchall())
+
+    @vericto_sql_tool(dialect="sqlite", guard=offline_guard)
+    async def run_sql_async(query: str) -> str:
+        """Run SQL (the check runs in a worker thread)."""
+        ran.append(query)
+        return str(db.execute(query).fetchall())
+
+    assert run(run_sql, "SELECT email FROM users WHERE id = 1").tool_outputs() == ["[('ana@example.com',)]"]
+    [out] = run(run_sql_async, "DELETE FROM users").tool_outputs()
+    assert out.startswith("Error: Vericto blocked this query (VERICTO-001, severity critical). It was NOT executed.")
+    assert ran == ["SELECT email FROM users WHERE id = 1"]
+    assert _count(db) == 2

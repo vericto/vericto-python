@@ -1,12 +1,16 @@
 # SPDX-FileCopyrightText: 2026 Vericto S.A.S.
 # SPDX-License-Identifier: Apache-2.0
 
-"""A local stand-in for the Vericto Runtime API (pytest-httpserver)."""
+"""A local stand-in for the Vericto Runtime API (pytest-httpserver), and a fake
+``vericto serve`` for offline mode."""
 
 from __future__ import annotations
 
 import json
+import os
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
 import pytest
@@ -132,5 +136,34 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "VERICTO_TIMEOUT",
         "VERICTO_FAIL_MODE",
         "VERICTO_CA_BUNDLE",
+        "VERICTO_OFFLINE",
+        "VERICTO_CLI",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+# -- offline mode: a stand-in for `vericto serve --stdio` (tests/fake_serve.py) -----
+
+FAKE_SERVE = Path(__file__).parent / "fake_serve.py"
+
+
+def make_fake_cli(directory: Path, name: str = "vericto") -> str:
+    """An executable ``name`` in ``directory`` that runs tests/fake_serve.py."""
+    path = directory / name
+    path.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{FAKE_SERVE}" "$@"\n', encoding="utf-8")
+    path.chmod(0o755)
+    return str(path)
+
+
+@pytest.fixture
+def fake_cli(tmp_path: Path) -> str:
+    if os.name == "nt":
+        pytest.skip("the fake vericto CLI is a POSIX shell script")
+    return make_fake_cli(tmp_path)
+
+
+@pytest.fixture
+def offline_guard(fake_cli: str) -> Iterator[Vericto]:
+    """A guard in offline mode, against the fake ``vericto serve``."""
+    with Vericto(offline=True, offline_cli_path=fake_cli) as g:
+        yield g

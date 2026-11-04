@@ -6,6 +6,55 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Offline mode (no account).** `Vericto(offline=True)` (or `VERICTO_OFFLINE=1`)
+  checks SQL with the engine built into the Vericto CLI, with no API key and no
+  network. The SDK runs `vericto serve --stdio` (CLI 2.1.0 or later, protocol 1)
+  as a separate process and talks to it over JSON Lines; it never links, imports
+  or bundles the engine, which is AGPL-3.0-only, so the SDK stays Apache-2.0. Opt
+  in only: a missing API key is still an error, and offline mode combined with an
+  API key (argument or `VERICTO_API_KEY`), a database id, an API URL or an
+  `evaluator` raises `VerictoConfigError` ("choose one").
+  - `offline_profile="runtime"` (default) answers as the Runtime API does for a
+    workspace with no overrides (`DROP TABLE` is `BLOCKED`); `"ci"` answers
+    exactly as `vericto check --offline` (schema DDL capped at `FLAGGED`).
+  - The binary is `offline_cli_path=`, else `VERICTO_CLI`, else `vericto` on
+    `PATH`. Without one, or with a CLI older than 2.1.0 or another protocol,
+    `VerictoConfigError` (`.code` `CLI_NOT_FOUND`, `CLI_TOO_OLD`,
+    `PROTOCOL_MISMATCH`) gives the install commands (npm, Homebrew, Scoop, GitHub
+    release). Nothing is downloaded.
+  - One process per guard, started on demand and shared by every thread (answers
+    are matched to requests by id). If it dies, the check restarts it once and
+    resends; if that fails too, or the engine reports `INTERNAL`, or no answer
+    comes within `timeout` (default 30 s offline), the check raises
+    `VerictoUnavailable` and the fail mode applies exactly as online.
+    `UNSUPPORTED_DIALECT`, `INVALID_REQUEST` and `TOO_LARGE` raise
+    `VerictoConfigError` (`VerictoUnsupportedDialect` for the dialect) in both
+    fail modes. The CLI's stderr goes to the `vericto` logger at debug level; SQL
+    is never logged.
+  - The verdict is the same `Verdict`, built through `Verdict.from_response`, with
+    `mode="offline"`, `engine_version` and `ruleset_version`
+    (`standard@engine-<version>`); the CLI's whole result document is in
+    `verdict.raw["offline_result"]`. One verdict per call, as online: a text with
+    several statements gets the strongest finding among them.
+  - Every wrapper and integration works unchanged on an offline guard (sqlite3,
+    DB-API, SQLAlchemy, LangChain, LlamaIndex, the OpenAI Agents SDK, Pydantic AI,
+    Airflow through `VERICTO_OFFLINE=1`).
+  - `vericto-dbt check --offline` (or `VERICTO_OFFLINE=1`) checks a dbt project
+    with the local engine and the `ci` profile; the JSON report gains `"mode"`.
+  - `OfflineEvaluator(profile=, cli_path=, timeout=)` for custom composition.
+- `Verdict.mode` (`"online"` / `"offline"`) and `Verdict.engine_version`.
+- `Vericto.close()`, and `Vericto` is a context manager: it closes its evaluator
+  (the HTTP connections, or the `vericto serve` process). `Vericto.offline` says
+  which mode a guard runs in.
+- `scripts/check_docs.py`: `<!-- docs-check: offline -->` blocks run against the
+  real CLI (`--require-cli`, `--offline-only`).
+- CI: an "Offline (vericto CLI)" job installs the CLI 2.1.0 release binary
+  (SHA-256 pinned and checked against the release) and runs the offline tests,
+  including parity with `vericto check --offline --format json` on 16 inputs over
+  the six dialects, and the offline README example.
+
 ## [0.7.0] - 2026-11-01
 
 Python 3.11 or later, and an official integration for Pydantic AI. On Python 3.10,

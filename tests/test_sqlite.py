@@ -209,3 +209,12 @@ def test_connect_builds_the_guard_from_the_environment(
     conn = vericto.sqlite.connect(str(tmp_path / "env.db"))
     conn.execute("SELECT 1")
     assert fake.requests[-1]["dialect"] == "sqlite"
+
+
+def test_offline_guard(offline_guard: Vericto, tmp_path: Path) -> None:
+    conn = vericto.sqlite.connect(str(tmp_path / "offline.db"), guard=offline_guard)
+    conn.executescript("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT); INSERT INTO users VALUES (1, 'a');")
+    with pytest.raises(VerictoBlocked):
+        conn.executescript("UPDATE users SET email = 'b' WHERE id = 1; DELETE FROM users;")
+    assert count(conn) == 1
+    assert conn.execute("SELECT email FROM users WHERE id = 1").fetchone() == ("a",)

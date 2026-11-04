@@ -8,7 +8,8 @@ The core is driver-agnostic:
 * :class:`Vericto` (the guard) applies a verdict: raise on block, run the masked
   rewrite, warn on flag, and the fail mode when Vericto cannot answer.
 * :class:`Evaluator` is how a verdict is obtained; :class:`RuntimeApiEvaluator`
-  asks the Vericto Runtime API.
+  asks the Vericto Runtime API, and :class:`OfflineEvaluator` (``Vericto(offline=True)``)
+  the local engine of the ``vericto`` CLI, a separate process (:mod:`vericto.offline`).
 
 Driver wrappers live in submodules so that importing ``vericto`` never imports a
 database driver: :mod:`vericto.snowflake`, :mod:`vericto.sqlite`,
@@ -30,6 +31,7 @@ from .errors import (
 )
 from .evaluator import Evaluator
 from .guard import Vericto
+from .offline import OfflineEvaluator
 from .placeholders import PlaceholderMappingError
 from .policy_context import EndUser, PolicyContext
 from .runtime_api import DEFAULT_API_URL, RuntimeApiEvaluator
@@ -42,6 +44,7 @@ __all__ = [
     "EndUser",
     "Evaluator",
     "Finding",
+    "OfflineEvaluator",
     "PlaceholderMappingError",
     "PolicyContext",
     "RuntimeApiEvaluator",

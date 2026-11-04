@@ -632,3 +632,22 @@ def test_python_dash_m_vericto(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit) as info:
         runpy.run_module("vericto", run_name="__main__")
     assert info.value.code == 2
+
+
+def test_offline_uses_the_local_engine(
+    project: Path, fake_cli: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VERICTO_CLI", fake_cli)
+    target = "model.jaffle.stg_customers"
+
+    def change(m: Dict[str, Any]) -> None:
+        m["nodes"][target]["compiled_code"] = "DELETE FROM customers"
+
+    edit_manifest(project, change)
+    out = tmp_path / "offline.json"
+    assert dbt.main(["check", "--project-dir", str(project), "--offline", "--format", "json", "-o", str(out)]) == 1
+    report = json.loads(out.read_text())
+    assert report["mode"] == "offline"
+    assert report["ruleset_version"] == "standard@engine-5.0.0"
+    [model] = [r for r in report["results"] if r["unique_id"] == target and r["kind"] == "model"]
+    assert (model["status"], model["rule_code"]) == ("BLOCKED", "VERICTO-001")
