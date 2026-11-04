@@ -124,6 +124,7 @@ when they cut a release.
 - ✅ `CHANGELOG.md` updated under `[Unreleased]` when a user can see the change.
 - ✅ At least one maintainer review (CODEOWNERS requests it).
 - ✅ Parameter values are never sent to Vericto.
+- ✅ The Contributor License Agreement is signed (`CLA` check).
 
 Pull requests are merged with a merge commit; squash and rebase merges are
 disabled.
@@ -149,13 +150,41 @@ deleted.
 Do **not** open a public issue for vulnerabilities. See [SECURITY.md](SECURITY.md)
 or email [security@vericto.com](mailto:security@vericto.com).
 
+## Contributor License Agreement
+
+Before a pull request can be merged, every human commit author must sign the
+Vericto Individual Contributor License Agreement, version 1.1
+([CLA index](CLA.md), permanent text [legal/cla/1.1.md](legal/cla/1.1.md)). The
+agreement lets Vericto distribute accepted contributions under the project's
+public license and under separate commercial licenses while the contributor
+keeps copyright.
+
+Read the agreement and post this exact pull-request comment:
+
+```
+I have read the CLA Document and I hereby sign the CLA
+```
+
+The CLA workflow records your GitHub username and numeric account ID,
+repository ID, pull-request number, comment ID, comment timestamp, CLA version
+and SHA-256 document hash in `signatures/v1.1/cla.json` on the
+`cla-signatures` branch. The data and retention are described in
+[CLA_PRIVACY_NOTICE.md](CLA_PRIVACY_NOTICE.md). If the check does not rerun,
+comment `recheck`. A commit whose email is not linked to a GitHub account
+cannot be matched to a signer. Closed pull requests are locked to preserve the
+signature comment.
+
+If an employer, client or other person may own rights in your contribution,
+obtain written authorization and send it to
+[legal@vericto.com](mailto:legal@vericto.com) before submitting.
+
 ## License
 
 vericto is open source under the [Apache License 2.0](LICENSE) since 0.4.0
-(versions 0.3.2 and earlier remain under the Elastic License 2.0). Unless you
-state otherwise, a contribution you submit for inclusion is under the Apache
-License 2.0, as its section 5 says, without additional terms or conditions;
-no contributor agreement is needed. Add the `SPDX-FileCopyrightText` and
-`SPDX-License-Identifier: Apache-2.0` header to new source files. For
-questions about licensing a contribution, write to
+(versions 0.3.2 and earlier remain under the Elastic License 2.0). A
+contribution you submit for inclusion is under the Apache License 2.0, as its
+section 5 says, and under the [Contributor License
+Agreement](#contributor-license-agreement). Add the `SPDX-FileCopyrightText` and
+`SPDX-License-Identifier: Apache-2.0` header to new source files. For questions
+about licensing a contribution, write to
 [legal@vericto.com](mailto:legal@vericto.com) before opening the pull request.
