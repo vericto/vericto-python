@@ -5,9 +5,10 @@
 they are registered.
 
 The license in [LICENSE](LICENSE) covers the code in this repository. It does
-not grant any right to use the Vericto marks. The Functional Source License
-says so in its "Trademarks" clause, the Apache License 2.0 in its section 6 and
-the BSD 2-Clause License by not granting any. This policy explains what you can
+not grant any right to use the Vericto marks. The GNU Affero General Public
+License (AGPL) permits a licensor to decline trademark rights in its section
+7(e), the Apache License 2.0 says so in its section 6 and the BSD 2-Clause
+License by not granting any. This policy explains what you can
 do with the marks anyway, so that people can always tell an official Vericto
 release from someone else's build.
 
