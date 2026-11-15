@@ -6,6 +6,11 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-15
+
+Offline mode: check SQL with no account and no network, through the engine built
+into the Vericto CLI (2.1.0 or later).
+
 ### Added
 
 - **Offline mode (no account).** `Vericto(offline=True)` (or `VERICTO_OFFLINE=1`)
@@ -578,6 +583,7 @@ the Vericto Runtime API (`POST /api/v1/proxy/query`).
 - The Vericto engine does not evaluate the `sqlite` dialect yet: the SQLite
   wrappers raise `VerictoUnsupportedDialect` until the server lists it.
 
+[0.8.0]: https://github.com/vericto/vericto-python/releases/tag/v0.8.0
 [0.7.0]: https://github.com/vericto/vericto-python/releases/tag/v0.7.0
 [0.6.0]: https://github.com/vericto/vericto-python/releases/tag/v0.6.0
 [0.5.1]: https://github.com/vericto/vericto-python/releases/tag/v0.5.1
