@@ -6,6 +6,8 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-16
+
 Offline `ci` checks follow Vericto CLI 2.3.0 and engine 5.1.0: schema DDL blocks
 unless the SQL is marked as a migration.
 
@@ -629,6 +631,7 @@ the Vericto Runtime API (`POST /api/v1/proxy/query`).
 - The Vericto engine does not evaluate the `sqlite` dialect yet: the SQLite
   wrappers raise `VerictoUnsupportedDialect` until the server lists it.
 
+[0.9.0]: https://github.com/vericto/vericto-python/releases/tag/v0.9.0
 [0.8.0]: https://github.com/vericto/vericto-python/releases/tag/v0.8.0
 [0.7.0]: https://github.com/vericto/vericto-python/releases/tag/v0.7.0
 [0.6.0]: https://github.com/vericto/vericto-python/releases/tag/v0.6.0
