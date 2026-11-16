@@ -3,13 +3,17 @@
 
 """A stand-in for ``vericto serve --stdio`` (protocol 1), for the offline unit tests.
 
-It is not the engine: its rules are string checks. ``DROP`` is VERICTO-010 (BLOCKED
-under the ``runtime`` profile, FLAGGED under ``ci``), ``DELETE`` without ``WHERE`` is
+It is not the engine: its rules are string checks. ``TRUNCATE`` is VERICTO-011
+(BLOCKED under both profiles, engine 5.1.0). ``DROP`` is VERICTO-010: BLOCKED, except
+under ``ci`` with ``"migration": true`` (CLI 2.3.0), where it is FLAGGED; a
+``migration`` that is not a boolean is INVALID_REQUEST. ``DELETE`` without ``WHERE`` is
 VERICTO-001 (BLOCKED), ``SELECT *`` is VERICTO-060 (MONITORED), ``GARBAGE`` is a
 PARSE_ERROR, anything else is ALLOWED. Several statements give the strongest one.
 
 ``FAKE_SERVE_MODE`` changes the behavior (comma-separated):
 
+* ``cap_all``: CLI 2.1.0 / 2.2.0, which ignore ``migration`` and flag ``DROP`` in every
+  ``ci`` request.
 * ``old``: the hello says CLI 2.0.0. ``protocol2``: protocol 2. ``no_hello``: exit 2
   before the hello, as a CLI without ``serve`` does. ``silent``: never says hello.
 * ``crash_once``: exit 1 on the earliest request whose SQL contains ``CRASH`` (state in
@@ -37,12 +41,14 @@ ENGINE = "5.0.0"
 _RANK = {"BLOCKED": 0, "FLAGGED": 1, "PARSE_ERROR": 2, "MONITORED": 3, "ALLOWED": 4}
 
 
-def _verdict(statement: str, profile: str) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
+def _verdict(statement: str, capped: bool) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
     upper = statement.upper()
     if "GARBAGE" in upper:
         return "PARSE_ERROR", None, None, None
+    if "TRUNCATE" in upper:
+        return "BLOCKED", "block", "VERICTO-011", "critical"
     if "DROP" in upper:
-        status, action = ("BLOCKED", "block") if profile == "runtime" else ("FLAGGED", "flag")
+        status, action = ("FLAGGED", "flag") if capped else ("BLOCKED", "block")
         return status, action, "VERICTO-010", "critical"
     if upper.lstrip().startswith("DELETE") and "WHERE" not in upper:
         return "BLOCKED", "block", "VERICTO-001", "critical"
@@ -51,8 +57,9 @@ def _verdict(statement: str, profile: str) -> Tuple[str, Optional[str], Optional
     return "ALLOWED", None, None, None
 
 
-def result_for(sql: str, profile: str) -> Dict[str, Any]:
-    found = [_verdict(s, profile) for s in sql.split(";") if s.strip()] or [("ALLOWED", None, None, None)]
+def result_for(sql: str, capped: bool) -> Dict[str, Any]:
+    """The result document; ``capped``: the schema DDL cap applies (a ``ci`` migration)."""
+    found = [_verdict(s, capped) for s in sql.split(";") if s.strip()] or [("ALLOWED", None, None, None)]
     status, action, rule, severity = min(found, key=lambda v: _RANK[v[0]])
     counts = {k: 0 for k in ("allowed", "blocked", "flagged", "monitored", "parse_errors")}
     counts["parse_errors" if status == "PARSE_ERROR" else status.lower()] += 1
@@ -105,7 +112,7 @@ def main() -> int:
             "profiles": ["runtime", "ci"],
             "type": "hello",
             "protocol": 2 if "protocol2" in modes else 1,
-            "cli_version": "2.0.0" if "old" in modes else "2.1.0",
+            "cli_version": "2.0.0" if "old" in modes else ("2.2.0" if "cap_all" in modes else "2.3.0"),
             "engine_version": ENGINE,
             "future_field": {"ignored": True},
         }
@@ -136,6 +143,12 @@ def main() -> int:
             message = f"unsupported dialect '{request.get('dialect')}'"
             _emit({"id": rid, "ok": False, "error": {"code": "UNSUPPORTED_DIALECT", "message": message}})
             continue
+        migration = request.get("migration")
+        if migration is not None and not isinstance(migration, bool):
+            _emit(
+                {"id": rid, "ok": False, "error": {"code": "INVALID_REQUEST", "message": "migration must be a boolean"}}
+            )
+            continue
         if "CRASH" in sql and ("crash" in modes or "crash_once" in modes):
             state = Path(os.environ.get("FAKE_SERVE_STATE", "/nonexistent"))
             if "crash" in modes or not state.exists():
@@ -156,7 +169,9 @@ def main() -> int:
         if "bad_result" in modes:
             _emit({"id": rid, "ok": True, "result": {"queries": []}})
             continue
-        answer = {"id": rid, "ok": True, "result": result_for(sql, request.get("profile") or "runtime")}
+        ci = (request.get("profile") or "runtime") == "ci"
+        capped = ci and (migration is True or "cap_all" in modes)
+        answer = {"id": rid, "ok": True, "result": result_for(sql, capped)}
         if "reverse" in modes and "PAIR" in sql.upper():
             held.append(answer)
             if len(held) == 2:

@@ -651,3 +651,25 @@ def test_offline_uses_the_local_engine(
     assert report["ruleset_version"] == "standard@engine-5.0.0"
     [model] = [r for r in report["results"] if r["unique_id"] == target and r["kind"] == "model"]
     assert (model["status"], model["rule_code"]) == ("BLOCKED", "VERICTO-001")
+
+
+def test_offline_hook_ddl_blocks_because_dbt_sql_is_not_a_migration(
+    project: Path, fake_cli: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # vericto CLI 2.3.0: the ci profile caps schema DDL only for migrations, and
+    # vericto-dbt never marks its SQL as one, so a DROP TABLE post-hook blocks.
+    monkeypatch.setenv("VERICTO_CLI", fake_cli)
+    target = "model.jaffle.customers"
+
+    def change(m: Dict[str, Any]) -> None:
+        m["nodes"][target]["config"]["post-hook"] = [{"sql": "DROP TABLE IF EXISTS analytics.customers_old"}]
+
+    edit_manifest(project, change)
+    out = tmp_path / "offline.json"
+    assert dbt.main(["check", "--project-dir", str(project), "--offline", "--format", "json", "-o", str(out)]) == 1
+    report = json.loads(out.read_text())
+    [hook] = [r for r in report["results"] if r["unique_id"] == target and r["kind"] == "post-hook"]
+    assert (hook["status"], hook["rule_code"]) == ("BLOCKED", "VERICTO-010")
+    assert any("not a migration" in n for n in report["notes"])
+    # The same project passes with --no-hooks (the documented remedy).
+    assert dbt.main(["check", "--project-dir", str(project), "--offline", "--no-hooks", "-q"]) == 0

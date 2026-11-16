@@ -166,9 +166,9 @@ jobs:
     runs-on: ${{ github.event.repository.private && fromJSON(vars.CI_RUNS_ON || '["self-hosted","linux","x64","vericto-spot"]') || fromJSON(vars.CI_RUNS_ON_PUBLIC || '"ubuntu-latest"') }}
     timeout-minutes: 10
     env:
-      VERICTO_CLI_VERSION: "2.1.0"
-      # sha256 of vericto-cli-x86_64-unknown-linux-musl.tar.xz in the v2.1.0 release.
-      VERICTO_CLI_SHA256: "8c041e05bc0f2260300f3e987d366f18e0b9fbefaacc089959d53c60f3f37f32"
+      VERICTO_CLI_VERSION: "2.3.0"
+      # sha256 of vericto-cli-x86_64-unknown-linux-musl.tar.xz in the v2.3.0 release.
+      VERICTO_CLI_SHA256: "edc257e9bbbf83cda194c324b3df112f54576bde54a3c8bbace405a19ff613fa"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

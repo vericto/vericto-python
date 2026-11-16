@@ -22,8 +22,11 @@ snowflake, postgres, redshift (evaluated as postgres), mysql/mariadb, sqlserver
 ``--offline`` (or ``VERICTO_OFFLINE=1``) evaluates with the local engine of the
 ``vericto`` CLI instead (2.1.0+, ``vericto serve --stdio``): no key, no network, the
 standard rules under the ``ci`` profile, so the verdicts equal ``vericto check
---offline``. Workspace rules, sensitive-column tags and the CI-check allowance do
-not apply.
+--offline`` of the same SQL outside a migration directory. Workspace rules,
+sensitive-column tags and the CI-check allowance do not apply. dbt SQL is not a
+versioned migration, so with CLI 2.3.0+ schema DDL in a model or hook (a
+``DROP TABLE`` post-hook) is BLOCKED, not FLAGGED, and TRUNCATE / DROP SCHEMA /
+DATABASE block with engine 5.1.0+.
 
 Exit codes (as vericto-cli): 0 nothing at or above ``--fail-on``; 1 a finding at
 or above it; 2 usage error (no manifest, unsupported adapter, nothing compiled);
@@ -722,7 +725,8 @@ def run_check(args: argparse.Namespace, out: IO[str], err: IO[str], client: Opti
         if report.mode == "offline":
             report.notes.append(
                 f"Offline: the standard rules of the local engine ({report.ruleset_version or 'vericto serve'}), "
-                "ci profile. Workspace rules and sensitive-column tags do not apply."
+                "ci profile, not a migration (schema DDL blocks with vericto CLI 2.3.0+). "
+                "Workspace rules and sensitive-column tags do not apply."
             )
 
     if args.format == "json":
