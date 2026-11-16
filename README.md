@@ -197,15 +197,31 @@ with vericto.Vericto(offline=True) as guard:  # or VERICTO_OFFLINE=1
         print(exc.verdict.rule_code, exc.suggested_fix)  # VERICTO-001 and a safer statement
     conn.close()
 
-# Exactly what `vericto check --offline` answers (schema DDL is flagged, not blocked):
-with vericto.Vericto(offline=True, offline_profile="ci") as guard:
+# Exactly what `vericto check --offline` answers for a file under migrations/
+# (schema DDL is flagged, not blocked):
+with vericto.Vericto(offline=True, offline_profile="ci", offline_migration=True) as guard:
     assert guard.check("DROP TABLE users", "postgres").decision is vericto.Decision.FLAGGED
 ```
 
 | `offline_profile` | Matches | `DROP TABLE users` |
 |---|---|---|
 | `"runtime"` (default) | the Runtime API, MCP `check_sql` and the proxy's local mode, for a workspace with no overrides | `BLOCKED` (VERICTO-010) |
-| `"ci"` | `vericto check --offline` and the CI-check API: the DDL rules VERICTO-010 to 019 are capped at `FLAGGED` | `FLAGGED` |
+| `"ci"` | `vericto check --offline --sql` (CLI 2.3.0+): schema DDL blocks, as under `"runtime"` | `BLOCKED` (VERICTO-010) |
+| `"ci"` + `offline_migration=True` | `vericto check --offline` of a migration file: the schema DDL rules (DROP TABLE, ALTER TABLE, DROP INDEX / TRIGGER: VERICTO-010, 013, 015 to 019, and the Snowflake / SQLite ones) are capped at `FLAGGED` | `FLAGGED` |
+
+**Schema DDL in `ci` checks blocks unless the SQL is a migration** (Vericto CLI
+2.3.0, engine 5.1.0). `vericto check --offline` caps schema DDL only for
+migration files (a `migrations/`, `migration/` or `migrate/` directory, a Flyway
+`V1__name.sql` or golang-migrate `1_name.up.sql` file, or a path in
+`.vericto.toml`'s `migration_paths`), and `vericto serve` caps it only for a `ci`
+request marked `"migration": true`. The SDK sends that marker when you pass
+`offline_migration=True` (it needs `offline_profile="ci"`); pass it when the SQL
+you check is a versioned migration, for example in a migration runner. Without it
+a `DROP TABLE` is `BLOCKED` under both profiles. TRUNCATE (VERICTO-011) and DROP
+SCHEMA / DATABASE (VERICTO-012) are never capped: they block even in a migration.
+CLI 2.1.0 and 2.2.0 ignore the marker and cap every `ci` check, so with them
+`DROP TABLE` is `FLAGGED` under `"ci"` either way; `verdict.raw["migration"]`
+says what the SDK sent.
 
 How it behaves:
 
@@ -232,6 +248,8 @@ How it behaves:
   logged.
 - `vericto-dbt check --offline` (or `VERICTO_OFFLINE=1`) checks a dbt project with
   the `ci` profile, with no key; Airflow workers use it with `VERICTO_OFFLINE=1`.
+  dbt models and hooks are not migrations, so with CLI 2.3.0+ schema DDL in them
+  blocks (see [dbt](#dbt)).
 
 Offline checks use the 42 standard rules at their default severities. A
 workspace adds custom rules, severity overrides, sensitive-column masking, agent
@@ -513,7 +531,7 @@ All inherit from `VerictoError`.
 and `supported_dialects()`. When the caller gives `context` or `end_user`, the
 guard passes them as keyword arguments of the same names (an evaluator without
 them raises `TypeError` then, rather than dropping them). This release ships
-`RuntimeApiEvaluator` and `OfflineEvaluator(profile=..., cli_path=..., timeout=...)`,
+`RuntimeApiEvaluator` and `OfflineEvaluator(profile=..., migration=..., cli_path=..., timeout=...)`,
 what `Vericto(offline=True)` builds (see
 [Offline mode](#offline-mode-no-account)). An evaluator with a `close()` method
 is closed by `Vericto.close()`.
@@ -723,9 +741,16 @@ imported: only its artifacts are read.
   tags. Runs carry GitHub/GitLab provenance and appear in the dashboard's CI reports.
 - **Offline** (`--offline` or `VERICTO_OFFLINE=1`): each statement is checked by
   the local `vericto` CLI (2.1.0+, see [Offline mode](#offline-mode-no-account))
-  with the `ci` profile, so the verdicts equal `vericto check --offline`. No key,
+  with the `ci` profile, so the verdicts equal `vericto check --offline` of the
+  same SQL outside a migration directory. No key,
   no network, no allowance spent; workspace rules and sensitive-column tags do not
-  apply. Combined with `VERICTO_API_KEY`, `--api-url` or `--database-id` it exits
+  apply. **With CLI 2.3.0+ (engine 5.1.0), schema DDL in a model or hook is
+  `BLOCKED`, not `FLAGGED`:** dbt SQL is not a versioned migration, it runs on
+  every `dbt run`. A `post-hook` with `DROP TABLE` / `ALTER TABLE … DROP COLUMN`
+  now exits `1`, and `TRUNCATE` / `DROP SCHEMA` hooks block with any CLI on
+  engine 5.1.0. Remedies: `--no-hooks`, `--select` to leave the node out, or
+  `--fail-on` (exit code only). Online, the CI-check API decides; it applies the
+  same rules once the hosted evaluator runs engine 5.1.0. Combined with `VERICTO_API_KEY`, `--api-url` or `--database-id` it exits
   `3` ("choose one"); a local engine failure exits `4`.
 - SARIF points at the model file (line 1: compiled lines do not map to the Jinja
   source; the message gives the compiled line). GitHub Actions example:
@@ -1016,10 +1041,18 @@ nada. Los wrappers e integraciones funcionan igual y el resultado es el mismo
 `Verdict`, con `mode="offline"`, `engine_version` y `ruleset_version`
 (`standard@engine-<versión>`). Perfiles: `offline_profile="runtime"` (por defecto,
 como la Runtime API: `DROP TABLE` queda `BLOCKED`) o `"ci"` (igual que
-`vericto check --offline`: el DDL de esquema queda `FLAGGED`). Combinarlo con una
+`vericto check --offline`). Desde la CLI 2.3.0 (motor 5.1.0), el perfil `"ci"`
+limita el DDL de esquema a `FLAGGED` solo en migraciones: sin marcar, `DROP TABLE`
+queda `BLOCKED`, como con `--sql`; con `offline_migration=True` (requiere
+`offline_profile="ci"`) el SDK envía `"migration": true` y el DDL de esquema queda
+`FLAGGED`, como en un archivo de `migrations/`. TRUNCATE y DROP SCHEMA / DATABASE se
+bloquean siempre. Las CLI 2.1.0 y 2.2.0 ignoran la marca y limitan todo chequeo
+`ci`. Combinarlo con una
 clave de API o con otro evaluador lanza `VerictoConfigError` ("choose one"). Si el
 proceso muere, se reinicia una vez; si vuelve a fallar, se aplica `fail_mode` como
-con la API. `vericto-dbt check --offline` usa el perfil `ci`. Sin conexión se usan
+con la API. `vericto-dbt check --offline` usa el perfil `ci` sin marca de
+migración: con la CLI 2.3.0+, el DDL de esquema en un modelo o hook de dbt queda
+`BLOCKED`. Sin conexión se usan
 las 42 reglas estándar: las reglas propias, el enmascarado de columnas sensibles,
 las allowlists, las políticas de negocio y la auditoría requieren un workspace. El
 motor corre en el proceso aparte de la CLI, con licencia AGPL-3.0-only; este

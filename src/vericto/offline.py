@@ -18,8 +18,15 @@ one of two profiles:
 
 * ``"runtime"`` (default): what the Runtime API answers for a workspace with no
   overrides. ``DROP TABLE`` is ``BLOCKED``.
-* ``"ci"``: exactly ``vericto check --offline``. Schema DDL (VERICTO-010 to 019) is
-  capped at ``FLAGGED``.
+* ``"ci"``: exactly ``vericto check --offline``. Since Vericto CLI 2.3.0 the schema
+  DDL cap applies to migrations only, as in ``check --offline``: a request is
+  checked like ``--sql`` (``DROP TABLE`` is ``BLOCKED``, as under ``"runtime"``)
+  unless it is marked as a migration (``migration=True``, the serve request's
+  ``"migration": true``), which caps the schema DDL rules (DROP TABLE, ALTER TABLE,
+  DROP INDEX / TRIGGER, the Snowflake and SQLite schema rules) at ``FLAGGED``, as
+  for a file under ``migrations/``. TRUNCATE and DROP SCHEMA / DATABASE are never
+  capped (engine 5.1.0). CLI 2.1.0 and 2.2.0 ignore the marker and cap every
+  ``ci`` request.
 
 What needs a workspace is not available offline: custom rules, severity overrides,
 sensitive-column masking, agent allowlists, business policies and the audit trail.
@@ -354,6 +361,16 @@ class _ServeProcess:
             slot.event.set()
 
 
+def _check_migration(migration: bool, profile: str) -> None:
+    """``migration`` is a bool, and means something only under the ``ci`` profile."""
+    if not isinstance(migration, bool):
+        raise VerictoConfigError(f"offline_migration must be True or False, got {migration!r}.")
+    if migration and profile != "ci":
+        raise VerictoConfigError(
+            "offline_migration=True needs offline_profile='ci': the runtime profile has no schema-migration cap."
+        )
+
+
 class OfflineEngine:
     """The ``vericto serve --stdio`` process behind offline mode, started on demand.
 
@@ -364,6 +381,9 @@ class OfflineEngine:
         profile: ``"runtime"`` (default) or ``"ci"`` (see the module docs).
         cli_path: the ``vericto`` binary; default ``VERICTO_CLI``, then PATH.
         timeout: seconds to wait for one answer (default 30).
+
+    :meth:`check` takes ``migration=True`` to mark the SQL as a versioned migration
+    (``ci`` profile only).
     """
 
     def __init__(
@@ -393,14 +413,21 @@ class OfflineEngine:
     def ruleset_version(self) -> Optional[str]:
         return f"standard@engine-{self.engine_version}" if self.engine_version else None
 
-    def check(self, sql: str, dialect: str) -> Dict[str, Any]:
+    def check(self, sql: str, dialect: str, *, migration: bool = False) -> Dict[str, Any]:
         """The ``result`` document for ``sql`` (``check --offline --format json``).
+
+        ``migration=True`` (``ci`` profile only) marks ``sql`` as a versioned
+        migration: the schema DDL rules are capped at ``FLAGGED``, as for a file
+        under ``migrations/`` (CLI 2.3.0+; older CLIs cap every ``ci`` request).
 
         Raises :class:`_ServeError` for an error answer, :class:`VerictoConfigError`
         when the CLI is unusable, and :class:`VerictoUnavailable` when the process
         failed twice (or timed out).
         """
-        payload = {"op": "check", "sql": sql, "dialect": dialect, "profile": self.profile}
+        _check_migration(migration, self.profile)
+        payload: Dict[str, Any] = {"op": "check", "sql": sql, "dialect": dialect, "profile": self.profile}
+        if migration:
+            payload["migration"] = True
         last = "no attempt made"
         for attempt in range(2):
             proc = self._process(restart=attempt > 0)
@@ -562,6 +589,12 @@ class OfflineEvaluator:
     Args:
         profile: ``"runtime"`` (default): a ``DROP TABLE`` is ``BLOCKED``, as on the
             Runtime API. ``"ci"``: exactly ``vericto check --offline``.
+        migration: ``True`` (``ci`` profile only) checks every statement as part of a
+            versioned migration: schema DDL (DROP TABLE, ALTER TABLE, ...) is capped
+            at ``FLAGGED``, as for a file under ``migrations/``. ``False``
+            (default): checked like ``vericto check --offline --sql``, so a
+            ``DROP TABLE`` is ``BLOCKED`` (CLI 2.3.0+; CLI 2.1.0 and 2.2.0 cap every
+            ``ci`` check). TRUNCATE and DROP SCHEMA / DATABASE always block.
         cli_path: the ``vericto`` binary (default ``VERICTO_CLI``, then PATH).
         timeout: seconds to wait for one verdict (default 30).
 
@@ -581,13 +614,22 @@ class OfflineEvaluator:
     mode = "offline"
 
     def __init__(
-        self, *, profile: str = DEFAULT_PROFILE, cli_path: Optional[str] = None, timeout: Optional[float] = None
+        self,
+        *,
+        profile: str = DEFAULT_PROFILE,
+        migration: bool = False,
+        cli_path: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> None:
+        if profile in PROFILES:
+            _check_migration(migration, profile)
         self.engine = OfflineEngine(profile=profile, cli_path=cli_path, timeout=timeout)
+        self.migration = migration
         self._noted_policy_fields = False
 
     def __repr__(self) -> str:
-        return f"OfflineEvaluator(profile={self.profile!r}, cli_path={self.engine.cli_path!r})"
+        extra = ", migration=True" if self.migration else ""
+        return f"OfflineEvaluator(profile={self.profile!r}{extra}, cli_path={self.engine.cli_path!r})"
 
     @property
     def profile(self) -> str:
@@ -605,14 +647,14 @@ class OfflineEvaluator:
             logger.info("vericto: offline mode has no business policies; context and end_user have no effect.")
             self._noted_policy_fields = True
         try:
-            result = self.engine.check(sql, dialect)
+            result = self.engine.check(sql, dialect, migration=self.migration)
         except _ServeError as exc:
             if exc.code in _REQUEST_ERRORS:
                 raise _config_error(exc, dialect) from None
             raise VerictoUnavailable(
                 f"{_WHERE} failed on this statement ({exc.code}): {exc.message or 'no detail'}.", code=exc.code
             ) from None
-        return verdict_from_result(result, sql, dialect, self.profile)
+        return verdict_from_result(result, sql, dialect, self.profile, migration=self.migration)
 
     def supported_dialects(self) -> Optional[Sequence[str]]:
         return KNOWN_DIALECTS
@@ -622,9 +664,12 @@ class OfflineEvaluator:
         self.engine.close()
 
 
-def verdict_from_result(result: Mapping[str, Any], sql: str, dialect: str, profile: str) -> Verdict:
+def verdict_from_result(
+    result: Mapping[str, Any], sql: str, dialect: str, profile: str, *, migration: bool = False
+) -> Verdict:
     """Map a ``check --offline --format json`` document (one query) to a :class:`Verdict`,
-    through the same :meth:`Verdict.from_response` as an online answer."""
+    through the same :meth:`Verdict.from_response` as an online answer. ``raw`` carries
+    ``profile`` and ``migration``."""
     query: Mapping[str, Any] = result["queries"][0]
     summary = result.get("summary")
     summary_fields: Mapping[str, Any] = summary if isinstance(summary, Mapping) else {}
@@ -641,6 +686,7 @@ def verdict_from_result(result: Mapping[str, Any], sql: str, dialect: str, profi
         "mode": "offline",
         "engine_version": engine_version,
         "profile": profile,
+        "migration": migration,
         # The whole document, as `vericto check --offline --format json` prints it.
         "offline_result": dict(result),
     }
@@ -650,7 +696,10 @@ def verdict_from_result(result: Mapping[str, Any], sql: str, dialect: str, profi
 class OfflineCiClient:
     """A stand-in for :class:`~vericto.ci_api.CiCheckClient` that checks with the local
     engine, for ``vericto-dbt check --offline``. Uses the ``ci`` profile by default,
-    so verdicts equal ``vericto check --offline``."""
+    so verdicts equal ``vericto check --offline`` of the same SQL outside a migration
+    directory: dbt models and hooks are not versioned migrations, so with CLI 2.3.0+
+    schema DDL in them (a ``DROP TABLE`` post-hook) is ``BLOCKED``, and TRUNCATE /
+    DROP SCHEMA / DATABASE block with engine 5.1.0+."""
 
     def __init__(self, *, profile: str = "ci", cli_path: Optional[str] = None, timeout: Optional[float] = None) -> None:
         self.engine = OfflineEngine(profile=profile, cli_path=cli_path, timeout=timeout)

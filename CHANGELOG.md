@@ -6,6 +6,52 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+Offline `ci` checks follow Vericto CLI 2.3.0 and engine 5.1.0: schema DDL blocks
+unless the SQL is marked as a migration.
+
+### Added
+
+- **`offline_migration=True`** (`Vericto(...)`, `OfflineEvaluator(migration=...)`,
+  `OfflineEngine.check(..., migration=...)`): marks the checked SQL as a versioned
+  migration. The SDK sends `"migration": true` in the `vericto serve` request, so
+  the schema DDL rules (DROP TABLE, ALTER TABLE, DROP INDEX / TRIGGER, the
+  Snowflake and SQLite schema rules) are capped at `FLAGGED`, as for a file under
+  `migrations/` in `vericto check --offline`. It needs `offline_profile="ci"`
+  (with `"runtime"`, or a value that is not a bool, `VerictoConfigError`) and
+  offline mode. The field is sent only when set, so requests without it are
+  unchanged. `verdict.raw["migration"]` says what was sent.
+
+### Changed
+
+- **Behaviour change with Vericto CLI 2.3.0+: offline `ci` checks block schema
+  DDL unless the request is a migration.** CLI 2.3.0 caps schema DDL only for
+  migration inputs: `vericto check --offline --sql "DROP TABLE users"` and a
+  `vericto serve` `ci` request without `"migration": true` are now `BLOCKED`
+  (were `FLAGGED`). `Vericto(offline=True, offline_profile="ci")` therefore
+  blocks `DROP TABLE` with CLI 2.3.0+; pass `offline_migration=True` for SQL that
+  is a migration. CLI 2.1.0 and 2.2.0 ignore the marker and cap every `ci` check.
+  TRUNCATE (VERICTO-011) and DROP SCHEMA / DATABASE (VERICTO-012) are never
+  capped with engine 5.1.0 (CLI 2.3.0): they block even in a migration.
+- **`vericto-dbt check --offline`**: dbt models and hooks are not migrations, so
+  with CLI 2.3.0+ schema DDL in them (a `DROP TABLE` / `ALTER TABLE … DROP
+  COLUMN` post-hook) is `BLOCKED` and exits `1`, and TRUNCATE / DROP SCHEMA
+  hooks block. vericto-dbt does not mark its SQL as a migration. Remedies:
+  `--no-hooks`, `--select`, or `--fail-on`. The offline note in the report says
+  so. Online, the CI-check API decides.
+- README: the profile table, the offline example (now `offline_migration=True`),
+  the dbt section and the Spanish summary describe the migration scope.
+
+### Tests
+
+- The fake `vericto serve` follows CLI 2.3.0 (`DROP` flagged only for a `ci`
+  migration, `TRUNCATE` always blocks, a non-bool `migration` is
+  `INVALID_REQUEST`; `FAKE_SERVE_MODE=cap_all` is CLI 2.2.0). New tests: the
+  `ci` profile with and without the marker, the marker sent only when set, the
+  configuration errors, CLI 2.2.0 behaviour, and a dbt `DROP TABLE` post-hook
+  that blocks offline. `tests/test_offline_cli.py` adds a parity case per input:
+  `offline_migration=True` equals `vericto check --offline` of the same SQL as
+  `migrations/0001_case.sql` (passes with CLI 2.1.0, 2.2.0 and 2.3.0).
+
 ## [0.8.0] - 2026-11-15
 
 Offline mode: check SQL with no account and no network, through the engine built

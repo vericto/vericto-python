@@ -8,9 +8,11 @@ than 2.1.0) every test here is skipped, unless ``VERICTO_REQUIRE_CLI=1`` (set by
 CI job that installs the CLI), which turns the skip into a failure.
 
 Parity: for each case, the verdict of ``Vericto(offline=True, offline_profile="ci")``
-and its whole result document equal ``vericto check --offline --format json`` from
-the same binary. Under the ``runtime`` profile, the schema DDL rules (VERICTO-010 to
-019) block instead of flagging, and nothing else changes.
+and its whole result document equal ``vericto check --offline --format json --sql``
+from the same binary, and with ``offline_migration=True`` they equal the same check of
+a file under ``migrations/``. The schema DDL rules (VERICTO-010, 013, 015 to 019) are
+capped at FLAGGED in a migration only (CLI 2.3.0; 2.1.0 and 2.2.0 cap every ``ci``
+check); under the ``runtime`` profile they always block, and nothing else changes.
 """
 
 from __future__ import annotations
@@ -90,6 +92,32 @@ def cli_check(sql: str, dialect: str, cwd: Path) -> Dict[str, Any]:
     return doc
 
 
+def cli_check_migration(sql: str, dialect: str, cwd: Path) -> Dict[str, Any]:
+    """``vericto check --offline --format json`` for the SQL as a file under ``migrations/``."""
+    (cwd / "migrations").mkdir(exist_ok=True)
+    (cwd / "migrations" / "0001_case.sql").write_text(sql, encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("VERICTO_")}
+    proc = subprocess.run(  # noqa: S603 - the CLI under test
+        [str(CLI), "check", "--offline", "--format", "json", "--dialect", dialect, "migrations/0001_case.sql"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        cwd=cwd,
+        env=env,
+    )
+    assert proc.returncode in (0, 1), proc.stderr
+    doc = json.loads(proc.stdout[proc.stdout.index("{") :])
+    assert isinstance(doc, dict)
+    return doc
+
+
+@pytest.fixture(scope="module")
+def migration_guard() -> Iterator[Vericto]:
+    with Vericto(offline=True, offline_profile="ci", offline_migration=True, offline_cli_path=CLI) as guard:
+        yield guard
+
+
 @pytest.fixture(scope="module")
 def ci_guard() -> Iterator[Vericto]:
     with Vericto(offline=True, offline_profile="ci", offline_cli_path=CLI) as guard:
@@ -125,6 +153,23 @@ def test_parity_with_check_offline(
         assert "VERICTO-010" <= runtime.rule_code <= "VERICTO-019"
     else:
         assert (runtime.decision, runtime.rule_code) == (ci.decision, ci.rule_code)
+
+
+@pytest.mark.parametrize(("case", "dialect", "sql", "capped"), CASES, ids=[c[0] for c in CASES])
+def test_migration_parity_with_a_migration_file(
+    migration_guard: Vericto, tmp_path: Path, case: str, dialect: str, sql: str, capped: bool
+) -> None:
+    expected = cli_check_migration(sql, dialect, tmp_path)
+    (query,) = expected["queries"]
+    v = migration_guard.check(sql, dialect)
+    # The file's document names the file; everything the verdict is built from is equal.
+    got = v.raw["offline_result"]
+    assert got["summary"] == expected["summary"]
+    assert got["exit_code"] == expected["exit_code"]
+    for key in ("status", "action", "rule_code", "severity", "ast_node_path", "suggested_fix"):
+        assert got["queries"][0][key] == query[key], key
+    assert v.decision.value == query["status"]
+    assert v.raw["migration"] is True
 
 
 def test_runtime_profile_blocks_drop_table(runtime_guard: Vericto) -> None:

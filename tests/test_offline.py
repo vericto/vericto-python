@@ -101,11 +101,65 @@ def test_offline_verdicts_carry_mode_engine_and_ruleset(offline_guard: Vericto) 
     assert offline_guard.prepare("SELECT 1", "sqlite") == "SELECT 1"
 
 
-def test_ci_profile_caps_ddl(fake_cli: str) -> None:
-    with Vericto(offline=True, offline_profile="ci", offline_cli_path=fake_cli) as guard:
+def test_ci_profile_caps_ddl_only_in_a_migration(fake_cli: str) -> None:
+    # CLI 2.3.0: a ci check is a `--sql` check unless it is marked as a migration.
+    with (
+        Vericto(offline=True, offline_profile="ci", offline_cli_path=fake_cli) as guard,
+        pytest.raises(VerictoBlocked) as info,
+    ):
+        guard.enforce("DROP TABLE users", "postgres")
+    assert info.value.verdict.rule_code == "VERICTO-010"
+    assert (info.value.verdict.raw["profile"], info.value.verdict.raw["migration"]) == ("ci", False)
+
+    with Vericto(offline=True, offline_profile="ci", offline_migration=True, offline_cli_path=fake_cli) as guard:
         v = guard.enforce("DROP TABLE users", "postgres")
-    assert v.decision is Decision.FLAGGED
-    assert v.raw["profile"] == "ci"
+        assert v.decision is Decision.FLAGGED
+        assert (v.raw["profile"], v.raw["migration"]) == ("ci", True)
+        # Never capped (engine 5.1.0): TRUNCATE blocks in a migration too.
+        with pytest.raises(VerictoBlocked) as info:
+            guard.enforce("TRUNCATE users", "postgres")
+        assert info.value.verdict.rule_code == "VERICTO-011"
+
+
+def test_migration_is_sent_only_when_set(fake_cli: str) -> None:
+    evaluator = OfflineEvaluator(profile="ci", cli_path=fake_cli)
+    sent: List[Dict[str, Any]] = []
+    try:
+        proc = evaluator.engine._process(restart=False)
+        original = proc.request
+
+        def spy(payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+            sent.append(dict(payload))
+            return original(payload, timeout)
+
+        proc.request = spy  # type: ignore[method-assign]
+        evaluator.evaluate("SELECT 1", "postgres")
+        evaluator.engine.check("SELECT 1", "postgres", migration=True)
+    finally:
+        evaluator.close()
+    assert "migration" not in sent[0]
+    assert sent[1]["migration"] is True
+
+
+def test_cli_before_2_3_caps_every_ci_check(fake_cli: str, mode: Any) -> None:
+    mode("cap_all")
+    with Vericto(offline=True, offline_profile="ci", offline_cli_path=fake_cli) as guard:
+        assert guard.check("DROP TABLE users", "postgres").decision is Decision.FLAGGED
+
+
+def test_migration_needs_the_ci_profile_and_a_bool(fake_cli: str, pids: Path) -> None:
+    with pytest.raises(VerictoConfigError, match="needs offline_profile='ci'"):
+        Vericto(offline=True, offline_migration=True, offline_cli_path=fake_cli)
+    with pytest.raises(VerictoConfigError, match="needs offline_profile='ci'"):
+        OfflineEvaluator(profile="runtime", migration=True, cli_path=fake_cli)
+    with pytest.raises(VerictoConfigError, match="True or False"):
+        OfflineEvaluator(profile="ci", migration="yes", cli_path=fake_cli)  # type: ignore[arg-type]
+    with pytest.raises(VerictoConfigError, match="needs offline_profile='ci'"):
+        OfflineEvaluator(cli_path=fake_cli).engine.check("DROP TABLE t", "postgres", migration=True)
+    # offline_migration=False is the default and allowed with either profile.
+    with Vericto(offline=True, offline_migration=False, offline_cli_path=fake_cli) as guard:
+        assert guard.check("DROP TABLE users", "postgres").blocked
+    assert "migration=True" in repr(OfflineEvaluator(profile="ci", migration=True, cli_path=fake_cli))
 
 
 def test_online_verdicts_say_online(fake: Any, guard: Vericto) -> None:
@@ -152,7 +206,7 @@ def test_offline_with_an_evaluator_or_a_key_variable_is_choose_one(
 
 
 def test_an_offline_evaluator_can_be_passed_directly(fake_cli: str) -> None:
-    with Vericto(OfflineEvaluator(profile="ci", cli_path=fake_cli)) as guard:
+    with Vericto(OfflineEvaluator(profile="ci", migration=True, cli_path=fake_cli)) as guard:
         assert guard.offline
         assert guard.check("DROP TABLE t", "postgres").decision is Decision.FLAGGED
 
@@ -160,6 +214,8 @@ def test_an_offline_evaluator_can_be_passed_directly(fake_cli: str) -> None:
 def test_offline_options_need_offline(fake_cli: str) -> None:
     with pytest.raises(VerictoConfigError, match="offline=True"):
         Vericto(api_key=API_KEY, database_id=DATABASE_ID, offline_profile="ci")
+    with pytest.raises(VerictoConfigError, match="offline_migration apply to offline mode only"):
+        Vericto(api_key=API_KEY, database_id=DATABASE_ID, offline_migration=True)
     with pytest.raises(VerictoConfigError, match="offline_profile must be"):
         Vericto(offline=True, offline_cli_path=fake_cli, offline_profile="strict")
     with pytest.raises(VerictoConfigError, match="timeout"):
@@ -535,7 +591,8 @@ def test_offline_ci_client_shapes(fake_cli: str, mode: Any) -> None:
         assert not client.config().check_files
         body = client.check_queries(["SELECT 1", "DROP TABLE t"], "postgres")
         assert [q["line"] for q in body["queries"]] == [1, 2]
-        assert body["queries"][1]["status"] == "FLAGGED"  # ci profile
+        # ci profile, not a migration (CLI 2.3.0): checked like `check --offline --sql`.
+        assert body["queries"][1]["status"] == "BLOCKED"
         files = client.check_files([CiFile("a.sql", "SELECT 1")], "postgres")
         assert (files["queries"][0]["file_index"], files["queries"][0]["line"]) == (1, 1)
         with pytest.raises(CiRequestError):

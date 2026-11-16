@@ -73,6 +73,12 @@ class Vericto:
             an ``evaluator``, it raises :class:`~vericto.VerictoConfigError`.
         offline_profile: ``"runtime"`` (default: ``DROP TABLE`` is ``BLOCKED``, as on
             the Runtime API) or ``"ci"`` (exactly ``vericto check --offline``).
+        offline_migration: with ``offline_profile="ci"``, ``True`` checks the SQL as a
+            versioned migration: schema DDL (DROP TABLE, ALTER TABLE, ...) is capped
+            at ``FLAGGED``, as for a file under ``migrations/``. Default ``False``:
+            checked like ``vericto check --offline --sql``, so ``DROP TABLE`` is
+            ``BLOCKED`` (Vericto CLI 2.3.0+; 2.1.0 and 2.2.0 cap every ``ci`` check).
+            TRUNCATE and DROP SCHEMA / DATABASE block either way.
         offline_cli_path: the ``vericto`` binary (default ``VERICTO_CLI``, then PATH).
 
     The guard owns its evaluator: :meth:`close` (or ``with Vericto(...) as guard:``)
@@ -96,6 +102,7 @@ class Vericto:
         offline: Optional[bool] = None,
         offline_profile: Optional[str] = None,
         offline_cli_path: Optional[str] = None,
+        offline_migration: Optional[bool] = None,
     ) -> None:
         if offline_requested(offline):
             online = [
@@ -118,11 +125,15 @@ class Vericto:
                     "its own rules."
                 )
             evaluator = OfflineEvaluator(
-                profile=offline_profile or DEFAULT_PROFILE, cli_path=offline_cli_path, timeout=timeout
+                profile=offline_profile or DEFAULT_PROFILE,
+                migration=False if offline_migration is None else offline_migration,
+                cli_path=offline_cli_path,
+                timeout=timeout,
             )
-        elif offline_profile is not None or offline_cli_path is not None:
+        elif offline_profile is not None or offline_cli_path is not None or offline_migration is not None:
             raise VerictoConfigError(
-                "offline_profile and offline_cli_path apply to offline mode only: pass offline=True too."
+                "offline_profile, offline_cli_path and offline_migration apply to offline mode only: "
+                "pass offline=True too."
             )
         if evaluator is None:
             evaluator = RuntimeApiEvaluator(
